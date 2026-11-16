@@ -4,10 +4,8 @@
 
 import fs from "fs-extra";
 import pino from "pino";
-
 import makeWASocket, {
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion
+  useMultiFileAuthState
 } from "@whiskeysockets/baileys";
 
 import { CONFIG } from "../config.js";
@@ -22,17 +20,7 @@ export async function connectToWhatsApp() {
   const { state, saveCreds } =
     await useMultiFileAuthState(CONFIG.SESSION_DIR);
 
-  let version;
-
-  try {
-    const result = await fetchLatestBaileysVersion();
-    version = result.version;
-  } catch (error) {
-    logger.warn("Could not fetch latest WhatsApp version");
-  }
-
   const sock = makeWASocket({
-    ...(version ? { version } : {}),
     auth: state,
     logger: pino({ level: "silent" }),
     printQRInTerminal: false,
@@ -47,17 +35,43 @@ export async function connectToWhatsApp() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  if (!state.creds.registered && CONFIG.BOT_PHONE_NUMBER) {
-    logger.info(`Pairing requested for: ${CONFIG.BOT_PHONE_NUMBER}`);
+  let pairingStarted = false;
 
-    setTimeout(async () => {
-      if (!state.creds.registered) {
-        await requestPairing(sock);
-      }
-    }, 3000);
-  } else if (!state.creds.registered) {
-    logger.error("BOT_PHONE_NUMBER is missing.");
-  }
+  const startPairing = async () => {
+    if (pairingStarted || state.creds.registered) return;
+
+    pairingStarted = true;
+    await requestPairing(sock);
+  };
+
+  sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
+    if (connection === "connecting" && !state.creds.registered) {
+      logger.info(
+        `WhatsApp connecting for ${CONFIG.BOT_PHONE_NUMBER}`
+      );
+      void startPairing();
+    }
+
+    if (connection === "open") {
+      logger.success("WhatsApp connection opened");
+    }
+
+    if (connection === "close") {
+      const status =
+        lastDisconnect?.error?.output?.statusCode;
+
+      logger.warn(
+        `WhatsApp socket closed. Status: ${status ?? "unknown"}`
+      );
+    }
+  });
+
+  // Fallback: connecting event না এলে ৫ সেকেন্ড পরে চেষ্টা করবে।
+  setTimeout(() => {
+    if (!state.creds.registered) {
+      void startPairing();
+    }
+  }, 5000);
 
   return sock;
 }
