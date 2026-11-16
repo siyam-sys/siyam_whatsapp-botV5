@@ -4,9 +4,8 @@
 
 import fs from "fs-extra";
 import pino from "pino";
-import makeWASocket, {
-  useMultiFileAuthState
-} from "@whiskeysockets/baileys";
+
+import * as Baileys from "@whiskeysockets/baileys";
 
 import { CONFIG } from "../config.js";
 import { requestPairing } from "./pairing.js";
@@ -14,7 +13,29 @@ import { createLogger } from "../system/logger.js";
 
 const logger = createLogger();
 
+// Baileys-এর বিভিন্ন export format সামলানো
+const makeWASocket =
+  typeof Baileys.default === "function"
+    ? Baileys.default
+    : typeof Baileys.default?.default === "function"
+      ? Baileys.default.default
+      : Baileys.makeWASocket;
+
+const { useMultiFileAuthState } = Baileys;
+
 export async function connectToWhatsApp() {
+  if (typeof makeWASocket !== "function") {
+    throw new TypeError(
+      "Baileys makeWASocket export পাওয়া যায়নি। Installed package version পরীক্ষা করুন।"
+    );
+  }
+
+  if (typeof useMultiFileAuthState !== "function") {
+    throw new TypeError(
+      "Baileys useMultiFileAuthState export পাওয়া যায়নি।"
+    );
+  }
+
   await fs.ensureDir(CONFIG.SESSION_DIR);
 
   const { state, saveCreds } =
@@ -35,44 +56,23 @@ export async function connectToWhatsApp() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  let pairingStarted = false;
+  if (!state.creds.registered && CONFIG.BOT_PHONE_NUMBER) {
+    logger.info(
+      `Pairing requested for: ${CONFIG.BOT_PHONE_NUMBER}`
+    );
 
-  const startPairing = async () => {
-    if (pairingStarted || state.creds.registered) return;
+    setTimeout(async () => {
+      if (state.creds.registered) return;
 
-    pairingStarted = true;
-    await requestPairing(sock);
-  };
-
-  sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
-    if (connection === "connecting" && !state.creds.registered) {
-      logger.info(
-        `WhatsApp connecting for ${CONFIG.BOT_PHONE_NUMBER}`
-      );
-      void startPairing();
-    }
-
-    if (connection === "open") {
-      logger.success("WhatsApp connection opened");
-    }
-
-    if (connection === "close") {
-      const status =
-        lastDisconnect?.error?.output?.statusCode;
-
-      logger.warn(
-        `WhatsApp socket closed. Status: ${status ?? "unknown"}`
-      );
-    }
-  });
-
-  // Fallback: connecting event না এলে ৫ সেকেন্ড পরে চেষ্টা করবে।
-  setTimeout(() => {
-    if (!state.creds.registered) {
-      void startPairing();
-    }
-  }, 5000);
+      try {
+        await requestPairing(sock);
+      } catch (error) {
+        logger.error("Pairing startup error", error);
+      }
+    }, 3000);
+  } else if (!state.creds.registered) {
+    logger.error("BOT_PHONE_NUMBER is missing.");
+  }
 
   return sock;
-    }
-        
+}
