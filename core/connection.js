@@ -1,4 +1,3 @@
-
 // AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
 // WARNING: AUTHOR পরিবর্তন করলে এই ফাইল Disable হবে।
 
@@ -48,16 +47,19 @@ export async function connectToWhatsApp() {
   sock.ev.on("creds.update", saveCreds);
 
   if (!state.creds.registered && CONFIG.BOT_PHONE_NUMBER) {
-    logger.info(`Pairing requested for: ${CONFIG.BOT_PHONE_NUMBER}`);
+    logger.info(
+      `Pairing code will be generated in 30 seconds for: ${CONFIG.BOT_PHONE_NUMBER}`
+    );
 
     setTimeout(async () => {
       if (!state.creds.registered) {
         await requestPairing(sock);
       }
-    }, 3000);
+    }, 30000);
+
   } else if (!state.creds.registered) {
     logger.error("BOT_PHONE_NUMBER is missing.");
   }
 
   return sock;
-}
+    }
