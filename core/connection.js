@@ -1,5 +1,6 @@
 
 // AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
+// WARNING: AUTHOR পরিবর্তন করলে এই ফাইল Disable হবে।
 
 import fs from "fs-extra";
 import pino from "pino";
@@ -32,37 +33,30 @@ export async function connectToWhatsApp() {
 
   const sock = makeWASocket({
     ...(version ? { version } : {}),
-
     auth: state,
-
     logger: pino({ level: "silent" }),
-
     printQRInTerminal: false,
-
     browser: [
       CONFIG.BOT_NAME,
       "Chrome",
       CONFIG.VERSION
     ],
-
     markOnlineOnConnect: false,
     syncFullHistory: false
   });
 
   sock.ev.on("creds.update", saveCreds);
 
-  if (!state.creds.registered && CONFIG.PHONE_NUMBER) {
+  if (!state.creds.registered && CONFIG.BOT_PHONE_NUMBER) {
+    logger.info(`Pairing requested for: ${CONFIG.BOT_PHONE_NUMBER}`);
+
     setTimeout(async () => {
       if (!state.creds.registered) {
         await requestPairing(sock);
       }
     }, 3000);
-  }
-
-  if (!CONFIG.PHONE_NUMBER && !state.creds.registered) {
-    logger.warn(
-      "BOT_PHONE_NUMBER is empty. Pairing cannot start."
-    );
+  } else if (!state.creds.registered) {
+    logger.error("BOT_PHONE_NUMBER is missing.");
   }
 
   return sock;
