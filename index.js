@@ -1,9 +1,10 @@
+
 // AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
+// WARNING: AUTHOR পরিবর্তন করলে এই ফাইল Disable হবে।
 
 import fs from "fs-extra";
 
 import { CONFIG } from "./config.js";
-
 import { createLogger } from "./system/logger.js";
 import { validateAuthor } from "./scripts/authorGuard.js";
 import { printWatchdog } from "./system/watchdog.js";
@@ -18,6 +19,9 @@ import { DisconnectReason } from "@whiskeysockets/baileys";
 
 const logger = createLogger();
 
+const BASE_RECONNECT_DELAY = 5000;
+const MAX_RECONNECT_DELAY = 60000;
+
 let currentSocket = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
@@ -29,10 +33,12 @@ async function prepareDirectories() {
     CONFIG.SESSION_DIR,
     CONFIG.COMMAND_DIR,
     CONFIG.EVENT_DIR,
-    CONFIG.DATABASE_DIR
+    CONFIG.DATABASE?.DIRECTORY
   ].filter(Boolean);
 
-  await Promise.all(dirs.map(dir => fs.ensureDir(dir)));
+  await Promise.all(
+    dirs.map(dir => fs.ensureDir(dir))
+  );
 }
 
 async function startBot() {
@@ -43,7 +49,7 @@ async function startBot() {
   try {
     await prepareDirectories();
 
-    logger.info("Starting " + CONFIG.BOT_NAME);
+    logger.info(`Starting ${CONFIG.BOT_NAME}`);
 
     if (CONFIG.AUTHOR_CHECK) {
       await validateAuthor();
@@ -60,12 +66,9 @@ async function startBot() {
     currentSocket = sock;
 
     handleMessages(sock);
-
     attachEvents(sock);
 
-    sock.ev.on("connection.update", async update => {
-      const { connection, lastDisconnect } = update;
-
+    sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
       if (connection === "open") {
         reconnectAttempts = 0;
 
@@ -89,33 +92,49 @@ async function startBot() {
           logger.error(
             "WhatsApp session logged out. Relink the account."
           );
+
           isStopping = true;
           return;
         }
 
-        scheduleReconnect();
+        if (
+          statusCode === DisconnectReason.restartRequired ||
+          statusCode === 515
+        ) {
+          scheduleReconnect(1500);
+        } else {
+          scheduleReconnect();
+        }
       }
     });
 
   } catch (error) {
     logger.error("Bot startup failed", error);
     scheduleReconnect();
+
   } finally {
     isStarting = false;
   }
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(customDelay) {
   if (isStopping || reconnectTimer) return;
 
   reconnectAttempts++;
 
-  const delay = Math.min(
-    CONFIG.RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1),
-    CONFIG.MAX_RECONNECT_DELAY
+  const backoff = Math.min(
+    BASE_RECONNECT_DELAY *
+      (2 ** Math.min(reconnectAttempts - 1, 4)),
+    MAX_RECONNECT_DELAY
   );
 
-  logger.warn(`Reconnecting in ${Math.round(delay / 1000)} seconds`);
+  const delay = Number.isFinite(customDelay)
+    ? customDelay
+    : backoff;
+
+  logger.warn(
+    `Reconnecting in ${Math.ceil(delay / 1000)} seconds`
+  );
 
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
@@ -141,7 +160,9 @@ async function shutdown() {
   }
 
   try {
-    currentSocket?.end?.(new Error("Bot shutdown"));
+    currentSocket?.end?.(
+      new Error("Bot shutdown")
+    );
   } catch (error) {
     logger.error("Shutdown error", error);
   }
