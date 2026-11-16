@@ -74,4 +74,5 @@ export async function connectToWhatsApp() {
   }, 5000);
 
   return sock;
-}
+    }
+        
