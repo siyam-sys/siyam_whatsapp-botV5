@@ -7,37 +7,38 @@ import { createLogger } from "../system/logger.js";
 
 const logger = createLogger();
 
-let pairingRequested = false;
-
 export async function requestPairing(sock) {
-  if (pairingRequested) return null;
-
-  const phoneNumber = CONFIG.BOT_PHONE_NUMBER;
+  const phoneNumber = String(
+    CONFIG.BOT_PHONE_NUMBER || ""
+  ).replace(/\D/g, "");
 
   if (!phoneNumber) {
-    logger.error("Phone number is missing in configuration.");
+    logger.error(
+      "BOT_PHONE_NUMBER is missing. Use country code, digits only."
+    );
     return null;
   }
 
   if (!sock || typeof sock.requestPairingCode !== "function") {
-    logger.error("Pairing is not available on this connection.");
+    logger.error(
+      "This Baileys socket does not support pairing codes."
+    );
     return null;
   }
 
   try {
-    pairingRequested = true;
-
-    logger.info(`Generating pairing code for ${phoneNumber}`);
+    logger.info(
+      `Requesting WhatsApp pairing code for ${phoneNumber}`
+    );
 
     const code = await sock.requestPairingCode(phoneNumber);
 
-    logger.success("WhatsApp Pairing Code:");
+    logger.success("WhatsApp Pairing Code generated:");
     logger.info(code);
 
     return code;
 
   } catch (error) {
-    pairingRequested = false;
     logger.error("Pairing code request failed", error);
     return null;
   }
