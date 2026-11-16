@@ -1,3 +1,4 @@
+
 // AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
 // WARNING: AUTHOR পরিবর্তন করলে এই ফাইল Disable হবে।
 
@@ -5,8 +6,7 @@ import fs from "fs-extra";
 import pino from "pino";
 
 import makeWASocket, {
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion
+  useMultiFileAuthState
 } from "@whiskeysockets/baileys";
 
 import { CONFIG } from "../config.js";
@@ -21,45 +21,89 @@ export async function connectToWhatsApp() {
   const { state, saveCreds } =
     await useMultiFileAuthState(CONFIG.SESSION_DIR);
 
-  let version;
-
-  try {
-    const result = await fetchLatestBaileysVersion();
-    version = result.version;
-  } catch (error) {
-    logger.warn("Could not fetch latest WhatsApp version");
-  }
-
   const sock = makeWASocket({
-    ...(version ? { version } : {}),
     auth: state,
-    logger: pino({ level: "silent" }),
-    printQRInTerminal: false,
+
+    logger: pino({
+      level: "silent"
+    }),
+
     browser: [
       CONFIG.BOT_NAME,
       "Chrome",
       CONFIG.VERSION
     ],
+
     markOnlineOnConnect: false,
     syncFullHistory: false
   });
 
+  // Save authentication credentials
   sock.ev.on("creds.update", saveCreds);
 
-  if (!state.creds.registered && CONFIG.BOT_PHONE_NUMBER) {
+  let pairingStarted = false;
+
+  // Request pairing only when WhatsApp socket is ready
+  sock.ev.on("connection.update", async (update) => {
+    const { qr, connection } = update;
+
+    if (
+      connection === "open"
+    ) {
+      pairingStarted = true;
+      return;
+    }
+
+    if (
+      !qr ||
+      state.creds.registered ||
+      !CONFIG.PAIRING.ENABLED ||
+      pairingStarted
+    ) {
+      return;
+    }
+
+    if (!CONFIG.BOT_PHONE_NUMBER) {
+      logger.error(
+        "BOT_PHONE_NUMBER is missing. Check your .env file."
+      );
+      return;
+    }
+
+    pairingStarted = true;
+
     logger.info(
-      `Pairing code will be generated in 30 seconds for: ${CONFIG.BOT_PHONE_NUMBER}`
+      "WhatsApp is ready. Requesting pairing code..."
     );
 
-    setTimeout(async () => {
-      if (!state.creds.registered) {
-        await requestPairing(sock);
-      }
-    }, 30000);
+    try {
+      const code = await requestPairing(sock);
 
-  } else if (!state.creds.registered) {
-    logger.error("BOT_PHONE_NUMBER is missing.");
+      if (!code) {
+        pairingStarted = false;
+
+        logger.warn(
+          "Pairing code was not generated. Check the error above."
+        );
+      }
+    } catch (error) {
+      pairingStarted = false;
+
+      logger.error(
+        "Pairing code generation failed",
+        error
+      );
+    }
+  });
+
+  if (
+    !state.creds.registered &&
+    !CONFIG.BOT_PHONE_NUMBER
+  ) {
+    logger.error(
+      "Please configure BOT_PHONE_NUMBER in .env"
+    );
   }
 
   return sock;
-    }
+}
