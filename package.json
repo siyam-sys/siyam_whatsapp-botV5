@@ -17,7 +17,6 @@
     "@napi-rs/canvas": "^0.1.80",
     "dotenv": "^16.4.7",
     "fs-extra": "^11.2.0",
-    "moment-timezone": "^0.5.47",
     "pino": "^9.6.0"
   }
 }
