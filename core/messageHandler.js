@@ -1,7 +1,5 @@
 
-// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
-
-import { CONFIG } from "../config.js";
+import { CONFIG, isOwner } from "../config.js";
 import { handleCommand } from "./commandHandler.js";
 import { createLogger } from "../system/logger.js";
 
@@ -78,12 +76,32 @@ export function handleMessages(sock) {
 
         const isGroup = jid.endsWith("@g.us");
 
-        if (isGroup && !CONFIG.ALLOW_GROUP) continue;
-        if (!isGroup && !CONFIG.ALLOW_INBOX) continue;
-
-        const senderJid = isGroup
+        const rawSenderJid = isGroup
           ? message.key.participant || message.participant || ""
           : jid;
+
+        const senderAltJid = isGroup
+          ? message.key.participantAlt ||
+            message.participantAlt ||
+            ""
+          : message.key.remoteJidAlt || "";
+
+        // Owner-এর ফোন নম্বর পাওয়া গেলে সেটিকে senderJid হিসেবে ব্যবহার
+        // যাতে পুরোনো command-এর isOwner(senderJid) check-ও কাজ করে।
+        const senderJid = isOwner(rawSenderJid, senderAltJid)
+          ? (isOwner(senderAltJid) ? senderAltJid : rawSenderJid)
+          : rawSenderJid;
+
+        const senderUid = rawSenderJid;
+
+        // Owner identity শনাক্ত হলে group/inbox restriction-ও bypass
+        const mainOwner = isOwner(
+          rawSenderJid,
+          senderAltJid
+        );
+
+        if (isGroup && !CONFIG.ALLOW_GROUP && !mainOwner) continue;
+        if (!isGroup && !CONFIG.ALLOW_INBOX && !mainOwner) continue;
 
         const context = {
           sock,
@@ -91,6 +109,8 @@ export function handleMessages(sock) {
           body: getMessageText(message),
           jid,
           senderJid,
+          senderUid,
+          senderAltJid,
           isGroup,
           quotedMessageId: getQuotedMessageId(message),
           pushName: message.pushName || "User",
