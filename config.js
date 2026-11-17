@@ -8,22 +8,7 @@ import { fileURLToPath } from "url";
 export const AUTHOR = "𝐑𝐉 𝐬𝐢𝐲𝐚𝐦";
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-//owner 
-const OWNER_NUMBER = normalizeNumber("01789138157");
-
-
-const ROLE_UIDS = {
-  GROUP_ADMIN: [15518304043117],
-
-  BOT_ADMIN: [15518304043117],
-
-  OWNER: [
-    
-  ]
-};
-
-// Whitelist UID
-const WHITELIST_UIDS = [15518304043117];
+// ================= OWNER =================
 
 export function normalizeNumber(number = "") {
   let value = String(number)
@@ -31,10 +16,7 @@ export function normalizeNumber(number = "") {
     .split(":")[0]
     .replace(/\D/g, "");
 
-  if (value.startsWith("0")) {
-    value = "88" + value;
-  }
-
+  if (value.startsWith("0")) value = "88" + value;
   return value;
 }
 
@@ -51,15 +33,11 @@ export function normalizeWhatsAppId(id = "") {
     return normalizeNumber(value) + "@s.whatsapp.net";
   }
 
-  if (value.includes("@")) {
-    return value;
-  }
+  if (value.includes("@")) return value;
 
   const digits = value.replace(/\D/g, "");
-
   if (!digits) return "";
 
-  
   if (digits.startsWith("0") || digits.startsWith("88")) {
     return normalizeNumber(digits) + "@s.whatsapp.net";
   }
@@ -67,10 +45,31 @@ export function normalizeWhatsAppId(id = "") {
   return digits + "@lid";
 }
 
+// Main Owner phone number
+const OWNER_NUMBER = normalizeNumber("01789138157");
+
+// ================= ROLE UID =================
+
+const ROLE_UIDS = {
+  GROUP_ADMIN: [15518304043117],
+  BOT_ADMIN: [15518304043117],
+  OWNER: []
+};
+
+// ================= WHITELIST UID =================
+
+const WHITELIST_UIDS = [15518304043117];
+
+// Automatically normalize all UIDs
 const normalizeList = list =>
-  [...new Set((list || []).map(normalizeWhatsAppId).filter(Boolean))];
+  [...new Set(
+    (list || [])
+      .map(normalizeWhatsAppId)
+      .filter(Boolean)
+  )];
 
 const OWNER_ID = OWNER_NUMBER + "@s.whatsapp.net";
+
 const BOT_NUMBER = normalizeNumber(
   process.env.BOT_PHONE_NUMBER || "01608279461"
 );
@@ -86,6 +85,8 @@ const WHITELIST = normalizeList([
   ...(process.env.WHITELIST || "").split(",")
 ]);
 
+// ================= OWNER CHECK =================
+
 export function isOwner(...ids) {
   return ids.flat().some(id => {
     const value = String(id || "").trim();
@@ -96,34 +97,51 @@ export function isOwner(...ids) {
   });
 }
 
+// ================= ROLE CHECK =================
+
 export function getConfiguredRole(...ids) {
   const candidates = normalizeList(ids.flat());
 
   if (isOwner(...ids)) return 3;
 
-  if (normalizeList(ROLE_UIDS.OWNER).some(id => candidates.includes(id))) {
-    return 3;
-  }
+  if (
+    normalizeList(ROLE_UIDS.OWNER).some(id =>
+      candidates.includes(id)
+    )
+  ) return 3;
 
-  if (normalizeList(ROLE_UIDS.BOT_ADMIN).some(id => candidates.includes(id))) {
-    return 2;
-  }
+  if (
+    normalizeList(ROLE_UIDS.BOT_ADMIN).some(id =>
+      candidates.includes(id)
+    )
+  ) return 2;
 
-  if (normalizeList(ROLE_UIDS.GROUP_ADMIN).some(id => candidates.includes(id))) {
-    return 1;
-  }
+  if (
+    normalizeList(ROLE_UIDS.GROUP_ADMIN).some(id =>
+      candidates.includes(id)
+    )
+  ) return 1;
 
   return 0;
 }
+
+// ================= BOT ADMIN CHECK =================
 
 export function isBotAdmin(...ids) {
   return isOwner(...ids) || getConfiguredRole(...ids) >= 2;
 }
 
+// ================= WHITELIST CHECK =================
+
 export function isWhitelisted(...ids) {
   const candidates = normalizeList(ids.flat());
-  return WHITELIST.some(id => candidates.includes(id));
+
+  return WHITELIST.some(id =>
+    candidates.includes(id)
+  );
 }
+
+// ================= MAIN CONFIG =================
 
 export const CONFIG = Object.freeze({
   BOT_NAME: "RJ-siyam whatsapp-botV5",
@@ -140,10 +158,7 @@ export const CONFIG = Object.freeze({
   OWNER_ID,
 
   BOT_ADMINS,
-
-  BOT_ADMIN_IDS: BOT_ADMINS.map(id =>
-    id.includes("@") ? id : id + "@s.whatsapp.net"
-  ),
+  BOT_ADMIN_IDS: BOT_ADMINS,
 
   WHITELIST,
   WHITELIST_IDS: WHITELIST,
@@ -186,6 +201,7 @@ export const CONFIG = Object.freeze({
   MAX_RECONNECT_DELAY: 60000,
 
   AUTHOR_CHECK: process.env.AUTHOR_CHECK === "true",
+
   LOG_LEVEL: process.env.LOG_LEVEL || "info",
 
   LOGGING: Object.freeze({
