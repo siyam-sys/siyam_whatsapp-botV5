@@ -1,6 +1,4 @@
 
-// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
-
 export const COMMAND_CONFIG = Object.freeze({
   modes: {
     ALL: "all",
@@ -8,17 +6,13 @@ export const COMMAND_CONFIG = Object.freeze({
     WHITELIST: "whiteListMode",
     OWNER_ONLY: "ownerOnly"
   },
-
   roles: {
     USER: 0,
     GROUP_ADMIN: 1,
     BOT_ADMIN: 2,
-    OWNER: 3
+    OWNER: 2
   },
-
-  defaultRole: "USER",
-
+  defaultRole: 0,
   commandExtension: ".js",
-
   eventExtension: ".js"
 });
