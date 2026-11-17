@@ -1,6 +1,5 @@
 
 import fs from "fs-extra";
-
 import {
   CONFIG,
   isOwner,
@@ -11,29 +10,25 @@ import {
 } from "../config.js";
 
 import { COMMAND_CONFIG } from "../configCommands.js";
-import { getGroup } from "../database/groups.js";
 
-function normalizeRequiredRole(value) {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.max(0, Math.min(3, Math.floor(value)));
+function roleNumber(value) {
+  if (typeof value === "number") {
+    return Math.max(0, Math.min(2, value));
   }
 
-  const role = String(value ?? "USER").toUpperCase();
-
-  const aliases = {
+  const roles = {
     "0": 0,
     "1": 1,
     "2": 2,
-    "3": 3,
+    "3": 2,
     USER: 0,
     GROUP_ADMIN: 1,
     ADMIN: 1,
     BOT_ADMIN: 2,
-    BOTADMIN: 2,
-    OWNER: 3
+    OWNER: 2
   };
 
-  return aliases[role] ?? -1;
+  return roles[String(value ?? "USER").toUpperCase()] ?? -1;
 }
 
 async function getWhitelist() {
@@ -41,10 +36,7 @@ async function getWhitelist() {
 
   try {
     if (!(await fs.pathExists(file))) {
-      return {
-        enabled: false,
-        ids: [...CONFIG.WHITELIST_IDS]
-      };
+      return { enabled: false, ids: [...CONFIG.WHITELIST_IDS] };
     }
 
     const data = await fs.readJson(file);
@@ -52,20 +44,11 @@ async function getWhitelist() {
     return {
       enabled: Boolean(data.enabled),
       ids: Array.isArray(data.ids)
-        ? [
-            ...new Set(
-              data.ids.map(normalizeWhatsAppId).filter(Boolean)
-            )
-          ]
+        ? data.ids.map(normalizeWhatsAppId).filter(Boolean)
         : [...CONFIG.WHITELIST_IDS]
     };
-  } catch (error) {
-    console.error("[PERMISSION] Whitelist error:", error);
-
-    return {
-      enabled: false,
-      ids: [...CONFIG.WHITELIST_IDS]
-    };
+  } catch {
+    return { enabled: false, ids: [...CONFIG.WHITELIST_IDS] };
   }
 }
 
@@ -79,30 +62,16 @@ export async function checkPermission(context, commandConfig = {}) {
     isGroup
   } = context;
 
-  const identities = [
-    senderJid,
-    senderUid,
-    senderAltJid
-  ].filter(Boolean);
+  const identities = [senderJid, senderUid, senderAltJid].filter(Boolean);
 
-  // =========================================
-  // MAIN OWNER BYPASS — সব Role ও Mode-এর আগে
-  // =========================================
   if (isOwner(...identities)) {
-    return {
-      allowed: true,
-      role: "OWNER",
-      roleLevel: 3,
-      reason: "Main Owner Unlimited Permission"
-    };
+    return { allowed: true, role: "BOT_ADMIN", roleLevel: 2, reason: "Owner" };
   }
 
-  const configuredRole = getConfiguredRole(...identities);
   const botAdmin = isBotAdmin(...identities);
-
   let groupAdmin = false;
 
-  if (isGroup) {
+  if (isGroup && sock && jid) {
     try {
       const metadata = await sock.groupMetadata(jid);
 
@@ -127,36 +96,23 @@ export async function checkPermission(context, commandConfig = {}) {
     }
   }
 
-  let role = configuredRole;
-  let roleName = ["USER", "GROUP_ADMIN", "BOT_ADMIN", "OWNER"][role] || "USER";
+  let roleLevel = getConfiguredRole(...identities);
+  if (groupAdmin && roleLevel < 1) roleLevel = 1;
 
-  if (groupAdmin && role < 1) {
-    role = 1;
-    roleName = "GROUP_ADMIN";
-  }
+  const role = roleLevel >= 2
+    ? "BOT_ADMIN"
+    : roleLevel === 1
+      ? "GROUP_ADMIN"
+      : "USER";
 
-  const requiredRole = normalizeRequiredRole(
+  const requiredRole = roleNumber(
     commandConfig.role ??
     commandConfig.permission ??
     COMMAND_CONFIG.defaultRole
   );
 
   if (requiredRole < 0) {
-    return {
-      allowed: false,
-      role: roleName,
-      roleLevel: role,
-      reason: "Invalid role"
-    };
-  }
-
-  if (role < requiredRole) {
-    return {
-      allowed: false,
-      role: roleName,
-      roleLevel: role,
-      reason: "Insufficient role"
-    };
+    return { allowed: false, role, roleLevel, reason: "Invalid role" };
   }
 
   const whitelist = await getWhitelist();
@@ -169,58 +125,38 @@ export async function checkPermission(context, commandConfig = {}) {
       )
     );
 
+  if (whitelist.enabled && !botAdmin && !whitelisted) {
+    return { allowed: false, role, roleLevel, reason: "Whitelist only" };
+  }
+
+  if (requiredRole === 2 && !botAdmin) {
+    return { allowed: false, role, roleLevel, reason: "Bot Admin only" };
+  }
+
+  if (whitelist.enabled && whitelisted && requiredRole <= 1) {
+    return { allowed: true, role, roleLevel, reason: "Whitelist access" };
+  }
+
+  if (roleLevel < requiredRole) {
+    return { allowed: false, role, roleLevel, reason: "Insufficient role" };
+  }
+
   let mode = CONFIG.MESSAGE_MODE;
 
-  if (isGroup) {
-    try {
-      const group = await getGroup(jid);
-      if (group?.mode) mode = group.mode;
-    } catch {}
-  }
-
-  if (whitelist.enabled) {
-    mode = "whiteListMode";
-  }
+  if (whitelist.enabled) mode = "whiteListMode";
 
   if (mode === "ownerOnly" && !botAdmin) {
-    return {
-      allowed: false,
-      role: roleName,
-      roleLevel: role,
-      reason: "Owner only mode"
-    };
+    return { allowed: false, role, roleLevel, reason: "Bot Admin only" };
   }
 
-  if (
-    mode === "adminOnly" &&
-    !botAdmin &&
-    !groupAdmin
-  ) {
-    return {
-      allowed: false,
-      role: roleName,
-      roleLevel: role,
-      reason: "Admin only mode"
-    };
+  if (mode === "adminOnly" && !botAdmin && !groupAdmin) {
+    return { allowed: false, role, roleLevel, reason: "Admin only" };
   }
 
-  if (
-    mode === "whiteListMode" &&
-    !whitelisted &&
-    !botAdmin
-  ) {
-    return {
-      allowed: false,
-      role: roleName,
-      roleLevel: role,
-      reason: "Whitelist only"
-    };
+  if (mode === "whiteListMode" && !whitelisted && !botAdmin) {
+    return { allowed: false, role, roleLevel, reason: "Whitelist only" };
   }
 
-  return {
-    allowed: true,
-    role: roleName,
-    roleLevel: role,
-    reason: "Permission granted"
-  };
-}
+  return { allowed: true, role, roleLevel, reason: "Permission granted" };
+    }
+            
