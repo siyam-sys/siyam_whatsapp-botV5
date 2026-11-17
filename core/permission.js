@@ -12,8 +12,27 @@ function digits(value = "") {
 function isSameUser(a, b) {
   const first = digits(a);
   const second = digits(b);
+  return Boolean(first && second && first === second);
+}
 
-  return first && second && first === second;
+function normalizeRequiredRole(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const roles = ["USER", "GROUP_ADMIN", "BOT_ADMIN", "OWNER"];
+    return roles[Math.max(0, Math.min(3, Math.floor(value)))];
+  }
+
+  const role = String(value ?? "USER").toUpperCase();
+
+  const aliases = {
+    "0": "USER",
+    "1": "GROUP_ADMIN",
+    "2": "BOT_ADMIN",
+    "3": "OWNER",
+    ADMIN: "GROUP_ADMIN",
+    BOTADMIN: "BOT_ADMIN"
+  };
+
+  return aliases[role] || role;
 }
 
 export async function checkPermission(context, commandConfig = {}) {
@@ -21,11 +40,11 @@ export async function checkPermission(context, commandConfig = {}) {
 
   const owner = isSameUser(senderJid, CONFIG.OWNER);
 
-  const botAdmin = CONFIG.BOT_ADMINS.some(number =>
+  const botAdmin = (CONFIG.BOT_ADMINS || []).some(number =>
     isSameUser(senderJid, number)
   );
 
-  const whitelisted = CONFIG.WHITELIST.some(number =>
+  const whitelisted = (CONFIG.WHITELIST || []).some(number =>
     isSameUser(senderJid, number)
   );
 
@@ -35,13 +54,10 @@ export async function checkPermission(context, commandConfig = {}) {
     try {
       const metadata = await sock.groupMetadata(jid);
 
-      groupAdmin = metadata.participants.some(participant => {
-        const same = participant.id === senderJid;
-
-        return same &&
-          ["admin", "superadmin"].includes(participant.admin);
-      });
-
+      groupAdmin = (metadata.participants || []).some(participant =>
+        isSameUser(participant.id, senderJid) &&
+        ["admin", "superadmin"].includes(participant.admin)
+      );
     } catch {
       groupAdmin = false;
     }
@@ -54,9 +70,11 @@ export async function checkPermission(context, commandConfig = {}) {
   else if (groupAdmin) role = "GROUP_ADMIN";
 
   const roleValue = COMMAND_CONFIG.roles[role] ?? 0;
+  const requiredName = normalizeRequiredRole(
+    commandConfig.role ?? commandConfig.permission ?? "USER"
+  );
 
-  const requiredRole =
-    COMMAND_CONFIG.roles[commandConfig.role || "USER"];
+  const requiredRole = COMMAND_CONFIG.roles[requiredName];
 
   if (requiredRole === undefined) {
     return {
@@ -79,10 +97,9 @@ export async function checkPermission(context, commandConfig = {}) {
   if (isGroup) {
     try {
       const group = await getGroup(jid);
-
       if (group?.mode) mode = group.mode;
     } catch {
-      // Use global mode if group data is unavailable.
+      // Keep global mode.
     }
   }
 
