@@ -1,7 +1,5 @@
 
 {
-  "nam
-{
   "name": "rj-siyam-whatsapp-bot-v5",
   "version": "5.0.0",
   "description": "RJ-siyam whatsapp-botV5",
@@ -17,26 +15,6 @@
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.24",
-    "dotenv": "^16.4.7",
-    "fs-extra": "^11.2.0",
-    "pino": "^9.6.0"
-  }
-}
-e": "rj-siyam-whatsapp-bot-v5",
-  "version": "5.0.0",
-  "description": "RJ-siyam whatsapp-botV5",
-  "main": "index.js",
-  "type": "module",
-  "author": "𝐑𝐉 𝐬𝐢𝐲𝐚𝐦",
-  "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js"
-  },
-  "engines": {
-    "node": ">=20.0.0"
-  },
-  "dependencies": {
-    "@whiskeysockets/baileys": "6.7.18",
     "dotenv": "^16.4.7",
     "fs-extra": "^11.2.0",
     "pino": "^9.6.0"
