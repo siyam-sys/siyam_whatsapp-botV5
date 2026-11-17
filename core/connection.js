@@ -16,7 +16,6 @@ const makeWASocket =
 const {
   useMultiFileAuthState,
   fetchLatestWaWebVersion,
-  fetchLatestBaileysVersion,
   Browsers
 } = baileys;
 
@@ -31,41 +30,29 @@ async function getWhatsAppVersion() {
     });
 
     if (
-      live?.isLatest &&
-      Array.isArray(live.version) &&
+      Array.isArray(live?.version) &&
       live.version.length === 3
     ) {
       logger.success(
-        `Using live WhatsApp version: ${live.version.join(".")}`
+        `Using WhatsApp Web version: ${live.version.join(".")}`
       );
+
+      if (!live.isLatest) {
+        logger.warn(
+          "WhatsApp Web version isLatest=false; using returned live version."
+        );
+      }
 
       return live.version;
     }
   } catch (error) {
-    logger.warn("Live WhatsApp version fetch failed.");
-  }
-
-  try {
-    const fallback = await fetchLatestBaileysVersion({
-      timeout: 15000
-    });
-
-    if (
-      Array.isArray(fallback.version) &&
-      fallback.version.length === 3
-    ) {
-      logger.warn(
-        `Using Baileys fallback version: ${fallback.version.join(".")}`
-      );
-
-      return fallback.version;
-    }
-  } catch (error) {
-    logger.error("Baileys version fetch failed.", error);
+    logger.warn(
+      `Live WhatsApp version fetch failed: ${error.message}`
+    );
   }
 
   throw new Error(
-    "Unable to obtain a WhatsApp Web version."
+    "Unable to obtain a valid live WhatsApp Web version. Refusing stale fallback."
   );
 }
 
@@ -79,7 +66,6 @@ export async function connectToWhatsApp() {
 
   const sock = makeWASocket({
     version,
-
     auth: state,
 
     logger: pino({
@@ -145,5 +131,4 @@ export async function connectToWhatsApp() {
   });
 
   return sock;
-                                                          }
-   
+}
