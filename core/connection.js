@@ -1,4 +1,6 @@
 
+// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
+
 import fs from "fs-extra";
 import pino from "pino";
 
@@ -15,12 +17,15 @@ const makeWASocket =
 
 const {
   useMultiFileAuthState,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
+  Browsers
 } = baileys;
 
 if (typeof makeWASocket !== "function") {
   throw new Error("Baileys makeWASocket export unavailable");
 }
+
+let pairingTimer = null;
 
 export async function connectToWhatsApp() {
   await fs.ensureDir(CONFIG.SESSION_DIR);
@@ -40,12 +45,12 @@ export async function connectToWhatsApp() {
       version = result.version;
 
       logger.success(
-        `Using Baileys WhatsApp version: ${version.join(".")}`
+        `Using WhatsApp version: ${version.join(".")}`
       );
     }
   } catch (error) {
     logger.warn(
-      `Could not fetch WhatsApp version: ${error.message}`
+      `WhatsApp version check failed: ${error.message}`
     );
   }
 
@@ -60,47 +65,84 @@ export async function connectToWhatsApp() {
 
     printQRInTerminal: false,
 
-    browser: [
-      CONFIG.BOT_NAME,
-      "Chrome",
-      CONFIG.VERSION
-    ],
+    browser: Browsers
+      ? Browsers.ubuntu("Chrome")
+      : ["Ubuntu", "Chrome", "20.0.0"],
 
     markOnlineOnConnect: false,
-    syncFullHistory: false
+
+    syncFullHistory: false,
+
+    connectTimeoutMs: 60000,
+
+    defaultQueryTimeoutMs: 60000,
+
+    keepAliveIntervalMs: 25000
   });
 
+  // Save WhatsApp authentication credentials.
   sock.ev.on("creds.update", saveCreds);
 
-  if (!state.creds.registered && CONFIG.BOT_PHONE_NUMBER) {
+  // Generate pairing code only for unregistered accounts.
+  if (!state.creds.registered) {
+    const phoneNumber = String(
+      CONFIG.BOT_PHONE_NUMBER || ""
+    ).replace(/\D/g, "");
+
+    if (!phoneNumber) {
+      logger.error(
+        "BOT_PHONE_NUMBER is missing in config.js"
+      );
+
+      return sock;
+    }
+
     logger.info(
-      `Pairing code will be generated in 30 seconds for: ${CONFIG.BOT_PHONE_NUMBER}`
+      "Waiting before requesting WhatsApp pairing code..."
     );
 
-    setTimeout(async () => {
-      if (state.creds.registered) {
-        logger.info("WhatsApp account is already registered.");
-        return;
-      }
+    if (pairingTimer) {
+      clearTimeout(pairingTimer);
+      pairingTimer = null;
+    }
+
+    pairingTimer = setTimeout(async () => {
+      pairingTimer = null;
 
       try {
-        logger.info("Requesting WhatsApp pairing code...");
+        if (state.creds.registered) {
+          logger.info("Account is already registered.");
+          return;
+        }
+
+        logger.info(
+          `Requesting pairing code for ${phoneNumber}`
+        );
 
         const code = await requestPairing(sock);
 
-        if (code) {
-          logger.success("PAIRING CODE GENERATED");
-          logger.info(code);
-        } else {
-          logger.error("Pairing code generation failed.");
+        if (!code) {
+          logger.error(
+            "Pairing code generation failed."
+          );
+          return;
         }
-      } catch (error) {
-        logger.error("Pairing request failed:", error);
-      }
-    }, 30000);
 
-  } else if (!state.creds.registered) {
-    logger.error("BOT_PHONE_NUMBER is missing.");
+        logger.success("PAIRING CODE GENERATED");
+        logger.info(`CODE: ${code}`);
+
+      } catch (error) {
+        logger.error(
+          "Pairing code request failed:",
+          error
+        );
+      }
+    }, 10000);
+
+  } else {
+    logger.success(
+      "Existing WhatsApp session detected."
+    );
   }
 
   return sock;
