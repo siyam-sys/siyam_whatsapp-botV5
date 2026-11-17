@@ -3,31 +3,38 @@ import "dotenv/config";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
-
 export const AUTHOR = "𝐑𝐉 𝐬𝐢𝐲𝐚𝐦";
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-// ================= OWNER =================
+// MAIN OWNER: Phone Number অথবা WhatsApp UID
+const MAIN_OWNER = "01789138157";
 
-export function normalizeNumber(number = "") {
-  let value = String(number)
-    .split("@")[0]
-    .split(":")[0]
-    .replace(/\D/g, "");
+// Role 1: Group Admin
+const GROUP_ADMIN_IDS = [
+  "15518304043117"
+];
 
-  if (value.startsWith("0")) value = "88" + value;
-  return value;
+// Role 2: Bot Admin
+const BOT_ADMIN_IDS = [
+  "15518304043117"
+];
+
+// Whitelist: Phone Number অথবা UID
+const WHITELIST_IDS = [
+  "15518304043117"
+];
+
+export function normalizeNumber(value = "") {
+  let number = String(value).split("@")[0].split(":")[0].replace(/\D/g, "");
+  if (number.startsWith("0")) number = "88" + number;
+  return number;
 }
 
 export function normalizeWhatsAppId(id = "") {
-  let value = String(id || "").trim().toLowerCase();
-
+  const value = String(id || "").trim().toLowerCase();
   if (!value) return "";
 
-  if (value.includes("@lid")) {
-    return value.split(":")[0];
-  }
+  if (value.includes("@lid")) return value.split(":")[0];
 
   if (value.includes("@s.whatsapp.net")) {
     return normalizeNumber(value) + "@s.whatsapp.net";
@@ -45,165 +52,97 @@ export function normalizeWhatsAppId(id = "") {
   return digits + "@lid";
 }
 
-// Main Owner phone number
-const OWNER_NUMBER = normalizeNumber("01789138157");
-
-// ================= ROLE UID =================
-
-const ROLE_UIDS = {
-  GROUP_ADMIN: [15518304043117],
-  BOT_ADMIN: [15518304043117],
-  OWNER: []
-};
-
-// ================= WHITELIST UID =================
-
-const WHITELIST_UIDS = [15518304043117];
-
-// Automatically normalize all UIDs
 const normalizeList = list =>
-  [...new Set(
-    (list || [])
-      .map(normalizeWhatsAppId)
-      .filter(Boolean)
-  )];
+  [...new Set((list || []).map(normalizeWhatsAppId).filter(Boolean))];
 
-const OWNER_ID = OWNER_NUMBER + "@s.whatsapp.net";
+const MAIN_OWNER_ID = normalizeWhatsAppId(MAIN_OWNER);
+const OWNER_NUMBER = MAIN_OWNER_ID.endsWith("@s.whatsapp.net")
+  ? normalizeNumber(MAIN_OWNER_ID)
+  : "";
 
-const BOT_NUMBER = normalizeNumber(
-  process.env.BOT_PHONE_NUMBER || "01608279461"
-);
+const OWNER_ID = MAIN_OWNER_ID;
+const BOT_NUMBER = normalizeNumber(process.env.BOT_PHONE_NUMBER || "01608279461");
 
+const GROUP_ADMINS = normalizeList(GROUP_ADMIN_IDS);
 const BOT_ADMINS = normalizeList([
-  OWNER_ID,
-  ...(process.env.BOT_ADMINS || "").split(","),
-  ...ROLE_UIDS.BOT_ADMIN
+  MAIN_OWNER_ID,
+  ...BOT_ADMIN_IDS,
+  ...(process.env.BOT_ADMINS || "").split(",")
 ]);
 
 const WHITELIST = normalizeList([
-  ...WHITELIST_UIDS,
+  ...WHITELIST_IDS,
   ...(process.env.WHITELIST || "").split(",")
 ]);
 
-// ================= OWNER CHECK =================
-
 export function isOwner(...ids) {
-  return ids.flat().some(id => {
-    const value = String(id || "").trim();
-
-    if (!value) return false;
-
-    return normalizeNumber(value) === OWNER_NUMBER;
-  });
+  const candidates = normalizeList(ids.flat());
+  return candidates.includes(MAIN_OWNER_ID);
 }
-
-// ================= ROLE CHECK =================
 
 export function getConfiguredRole(...ids) {
   const candidates = normalizeList(ids.flat());
 
-  if (isOwner(...ids)) return 3;
-
-  if (
-    normalizeList(ROLE_UIDS.OWNER).some(id =>
-      candidates.includes(id)
-    )
-  ) return 3;
-
-  if (
-    normalizeList(ROLE_UIDS.BOT_ADMIN).some(id =>
-      candidates.includes(id)
-    )
-  ) return 2;
-
-  if (
-    normalizeList(ROLE_UIDS.GROUP_ADMIN).some(id =>
-      candidates.includes(id)
-    )
-  ) return 1;
+  if (isOwner(...ids)) return 2;
+  if (BOT_ADMINS.some(id => candidates.includes(id))) return 2;
+  if (GROUP_ADMINS.some(id => candidates.includes(id))) return 1;
 
   return 0;
 }
 
-// ================= BOT ADMIN CHECK =================
-
 export function isBotAdmin(...ids) {
-  return isOwner(...ids) || getConfiguredRole(...ids) >= 2;
+  return getConfiguredRole(...ids) >= 2;
 }
-
-// ================= WHITELIST CHECK =================
 
 export function isWhitelisted(...ids) {
   const candidates = normalizeList(ids.flat());
-
-  return WHITELIST.some(id =>
-    candidates.includes(id)
-  );
+  return WHITELIST.some(id => candidates.includes(id));
 }
-
-// ================= MAIN CONFIG =================
 
 export const CONFIG = Object.freeze({
   BOT_NAME: "RJ-siyam whatsapp-botV5",
   AUTHOR,
   VERSION: "5.0.0",
   ROOT_DIR,
-
   PREFIX: process.env.BOT_PREFIX || ",",
-
   BOT_PHONE_NUMBER: BOT_NUMBER,
-
   OWNER_NUMBER,
-  OWNER: OWNER_NUMBER,
+  OWNER: OWNER_NUMBER || OWNER_ID,
   OWNER_ID,
-
   BOT_ADMINS,
   BOT_ADMIN_IDS: BOT_ADMINS,
-
+  GROUP_ADMINS,
   WHITELIST,
   WHITELIST_IDS: WHITELIST,
-
-  ROLE_UIDS,
-
+  ROLE_UIDS: Object.freeze({
+    GROUP_ADMIN: GROUP_ADMINS,
+    BOT_ADMIN: BOT_ADMINS
+  }),
   SESSION_DIR: path.join(ROOT_DIR, "session"),
   COMMAND_DIR: path.join(ROOT_DIR, "scripts", "cmds"),
   EVENT_DIR: path.join(ROOT_DIR, "scripts", "events"),
   DATABASE_DIR: path.join(ROOT_DIR, "database"),
-
   DATABASE: Object.freeze({
     DIRECTORY: path.join(ROOT_DIR, "database"),
     USERS_FILE: path.join(ROOT_DIR, "database", "users.json"),
     GROUPS_FILE: path.join(ROOT_DIR, "database", "groups.json"),
     WHITELIST_FILE: path.join(ROOT_DIR, "database", "whitelist.json")
   }),
-
   ALLOW_GROUP: true,
   ALLOW_INBOX: true,
-
   MESSAGE_MODE: process.env.MESSAGE_MODE || "all",
   DEFAULT_MODE: "all",
-
-  MODES: Object.freeze([
-    "all",
-    "adminOnly",
-    "whiteListMode",
-    "ownerOnly"
-  ]),
-
+  MODES: Object.freeze(["all", "adminOnly", "whiteListMode", "ownerOnly"]),
   PAIRING: Object.freeze({
     ENABLED: true,
     PHONE_NUMBER: BOT_NUMBER,
     CODE_LENGTH: 8,
     SHOW_PHONE_NUMBER: true
   }),
-
   RECONNECT_DELAY: 5000,
   MAX_RECONNECT_DELAY: 60000,
-
   AUTHOR_CHECK: process.env.AUTHOR_CHECK === "true",
-
   LOG_LEVEL: process.env.LOG_LEVEL || "info",
-
   LOGGING: Object.freeze({
     SHOW_PAIRING_CODE: true,
     SHOW_CONNECTION_STATUS: true,
