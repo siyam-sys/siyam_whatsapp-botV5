@@ -1,4 +1,3 @@
-
 // AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
 
 import fs from "fs-extra";
@@ -13,9 +12,11 @@ import { readData } from "../database/index.js";
 import { getGroup } from "../database/groups.js";
 
 const logger = createLogger();
+
 const commands = new Map();
 const replySessions = new Map();
 const firstChats = new Set();
+const cooldowns = new Map();
 
 const MAX_REPLY_SESSIONS = 500;
 const REPLY_SESSION_TTL = 24 * 60 * 60 * 1000;
@@ -24,10 +25,25 @@ function normalize(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function normalizeAliases(aliases) {
+  if (!aliases) return [];
+
+  const list = Array.isArray(aliases)
+    ? aliases
+    : [aliases];
+
+  return list
+    .map(normalize)
+    .filter(Boolean);
+}
+
 function formatMessage(template, ...values) {
   return String(template).replace(/%(\d+)/g, (match, index) => {
     const value = values[Number(index) - 1];
-    return value === undefined ? match : String(value);
+
+    return value === undefined
+      ? match
+      : String(value);
   });
 }
 
@@ -41,7 +57,7 @@ async function getPrefixes(context) {
 
     globalPrefix = saved?.prefix || globalPrefix;
   } catch {
-    // Use configured prefix.
+    // Config prefix will be used.
   }
 
   let groupPrefix = globalPrefix;
@@ -62,6 +78,7 @@ async function getPrefixes(context) {
 function getLanguageMessage(key, ...values) {
   const messages = {
     commandNotFound:
+      
       '🤷‍♂️ 𝗖𝗼𝗺𝗺𝗮𝗻𝗱 "%1" 𝗱𝗼𝗲𝘀 𝗻𝗼𝘁 𝗲𝘅𝗶𝘀𝘁, 𝘁𝘆𝗽𝗲 %2𝗵𝗲𝗹𝗽 𝘁𝗼 𝘀𝗲𝗲 𝗮𝗹𝗹 𝗮𝘃𝗮𝗶𝗹𝗮𝗯𝗹𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀 📜',
     onlyPrefix:
       "🤖 𝗧𝗵𝗮𝘁'𝘀 𝗷𝘂𝘀𝘁 𝗺𝘆 𝗽𝗿𝗲𝗳𝗶𝘅! 𝗧𝘆𝗽𝗲 %1𝗵𝗲𝗹𝗽 𝘁𝗼 𝘀𝗲𝗲 𝗮𝗹𝗹 𝗮𝘃𝗮𝗶𝗹𝗮𝗯𝗹𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀 ✨",
@@ -79,7 +96,10 @@ function getLanguageMessage(key, ...values) {
 function rememberReply(result, command, jid, senderJid) {
   const messageId = result?.key?.id;
 
-  if (!messageId || typeof command.onReply !== "function") {
+  if (
+    !messageId ||
+    typeof command.onReply !== "function"
+  ) {
     return;
   }
 
@@ -98,9 +118,11 @@ function rememberReply(result, command, jid, senderJid) {
 
 function findReplySession(context) {
   const messageId = context.quotedMessageId;
+
   if (!messageId) return null;
 
   const session = replySessions.get(messageId);
+
   if (!session) return null;
 
   if (Date.now() - session.createdAt > REPLY_SESSION_TTL) {
@@ -113,11 +135,67 @@ function findReplySession(context) {
   return session;
 }
 
+function getCooldown(command, senderJid, jid) {
+  const config = command.config || {};
+
+  const seconds = Number(
+    config.cooldown ??
+    config.countDown ??
+    config.coolDown ??
+    config.cooldowns ??
+    0
+  );
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return {
+      active: false,
+      remaining: 0
+    };
+  }
+
+  const key = `${config.name}:${senderJid}:${jid}`;
+  const lastUsed = cooldowns.get(key) || 0;
+  const remaining = Math.ceil(
+    (seconds * 1000 - (Date.now() - lastUsed)) / 1000
+  );
+
+  return {
+    active: remaining > 0,
+    remaining: Math.max(0, remaining),
+    key
+  };
+}
+
+function setCooldown(cooldown) {
+  if (cooldown?.key) {
+    cooldowns.set(cooldown.key, Date.now());
+  }
+}
+
+function makeCommandContext(context, command, args, name, permission) {
+  return {
+    ...context,
+    args,
+    commandName: name,
+    permission,
+    config: command.config,
+
+    event: context.message,
+
+    message: {
+      ...context.message,
+      reply: context.reply
+    }
+  };
+}
+
 async function runLifecycleHook(hookName, context) {
   const uniqueCommands = new Set(commands.values());
 
   for (const command of uniqueCommands) {
-    if (typeof command?.[hookName] !== "function") continue;
+    if (typeof command?.[hookName] !== "function") {
+      continue;
+    }
 
     try {
       const permission = await checkPermission(
@@ -127,18 +205,15 @@ async function runLifecycleHook(hookName, context) {
 
       if (!permission.allowed) continue;
 
-      await command[hookName]({
-        ...context,
-        args: [],
-        commandName: command.config.name,
-        permission,
-        config: command.config,
-        event: context.message,
-        message: {
-          ...context.message,
-          reply: context.reply
-        }
-      });
+      await command[hookName](
+        makeCommandContext(
+          context,
+          command,
+          [],
+          command.config.name,
+          permission
+        )
+      );
     } catch (error) {
       logger.error(
         `${hookName} error: ${command.config?.name || "unknown"}`,
@@ -151,12 +226,13 @@ async function runLifecycleHook(hookName, context) {
 export async function loadCommands() {
   commands.clear();
   replySessions.clear();
+  cooldowns.clear();
 
   await fs.ensureDir(CONFIG.COMMAND_DIR);
 
   const files = await fs.readdir(CONFIG.COMMAND_DIR);
 
-  for (const file of files) {
+  for (const file of files.sort()) {
     if (!file.endsWith(".js")) continue;
 
     const fullPath = path.join(CONFIG.COMMAND_DIR, file);
@@ -173,12 +249,15 @@ export async function loadCommands() {
       }
 
       const module = await import(
-        pathToFileURL(fullPath).href + `?v=${Date.now()}`
+        `${pathToFileURL(fullPath).href}?v=${Date.now()}`
       );
 
       const command = module.default;
 
-      if (!command?.config || typeof command.onStart !== "function") {
+      if (
+        !command?.config ||
+        typeof command.onStart !== "function"
+      ) {
         logger.warn(`Invalid command disabled: ${file}`);
         continue;
       }
@@ -195,10 +274,20 @@ export async function loadCommands() {
         continue;
       }
 
+      if (commands.has(name)) {
+        logger.warn(`Duplicate command ignored: ${name}`);
+        continue;
+      }
+
       commands.set(name, command);
 
-      for (const alias of command.config.aliases || []) {
-        commands.set(normalize(alias), command);
+      for (const alias of normalizeAliases(command.config.aliases)) {
+        if (commands.has(alias)) {
+          logger.warn(`Duplicate alias ignored: ${alias}`);
+          continue;
+        }
+
+        commands.set(alias, command);
       }
 
       logger.success(`Loaded command: ${name}`);
@@ -229,6 +318,7 @@ export async function handleCommand(context) {
 
   await runLifecycleHook("onEvent", context);
 
+  // Reply command handling.
   const replySession = findReplySession(context);
 
   if (replySession) {
@@ -243,16 +333,19 @@ export async function handleCommand(context) {
       if (!permission.allowed) {
         return reply(
           command.config.permissionMessage ||
+          permission.message ||
           getLanguageMessage("onlyAdmin")
         );
       }
 
       const result = await command.onReply({
-        ...context,
-        args: body.trim().split(/\s+/),
-        commandName: command.config.name,
-        config: command.config,
-        permission,
+        ...makeCommandContext(
+          context,
+          command,
+          body.trim().split(/\s+/),
+          command.config.name,
+          permission
+        ),
         Reply: replySession
       });
 
@@ -262,21 +355,24 @@ export async function handleCommand(context) {
         context.jid,
         context.senderJid
       );
+
+      return result;
     } catch (error) {
       handleError(error, `Reply Command: ${command.config.name}`);
-      await reply("❌ রিপ্লাই প্রসেস করতে সমস্যা হয়েছে।");
+      await reply("❌ Reply command চালাতে সমস্যা হয়েছে।");
+      return;
     }
-
-    return;
   }
 
   const matchedPrefix = prefixes.find(prefix =>
     body.startsWith(prefix)
   );
 
+  
   if (!matchedPrefix) {
     const plainParts = body.trim().split(/\s+/);
     const plainName = normalize(plainParts[0]);
+
     const plainCommand = commands.get(plainName);
 
     if (
@@ -291,18 +387,21 @@ export async function handleCommand(context) {
       if (!permission.allowed) {
         return reply(
           plainCommand.config.permissionMessage ||
-          "🚫 𝗢𝗻𝗹𝘆 𝗠𝘆 𝗕𝗼𝘀𝘀 𝐒𝐈𝐘𝐀𝐌 আগে লেভেলে আয়🌚 সর এখান থেকে🙄🐸।"
+          permission.message ||
+          getLanguageMessage("onlyAdmin")
         );
       }
 
       try {
-        const result = await plainCommand.onStart({
-          ...context,
-          args: plainParts.slice(1),
-          commandName: plainName,
-          permission,
-          config: plainCommand.config
-        });
+        const result = await plainCommand.onStart(
+          makeCommandContext(
+            context,
+            plainCommand,
+            plainParts.slice(1),
+            plainName,
+            permission
+          )
+        );
 
         rememberReply(
           result,
@@ -314,7 +413,8 @@ export async function handleCommand(context) {
         return result;
       } catch (error) {
         handleError(error, "Command: prefix");
-        return reply("❌ Prefix কমান্ড চালাতে সমস্যা হয়েছে।");
+        await reply("❌ Prefix command চালাতে সমস্যা হয়েছে।");
+        return;
       }
     }
 
@@ -354,21 +454,38 @@ export async function handleCommand(context) {
     if (command.config.noPermissionMessage !== false) {
       await reply(
         command.config.permissionMessage ||
-        "🚫 𝗢𝗻𝗹𝘆 𝗠𝘆 𝗕𝗼𝘀𝘀 𝐒𝐈𝐘𝐀𝐌 তুই আবাল 🌚 সর এখান থেকে🙄🐸"
+        permission.message ||
+        getLanguageMessage("onlyAdmin")
       );
     }
 
     return;
   }
 
+  const cooldown = getCooldown(
+    command,
+    context.senderJid,
+    context.jid
+  );
+
+  if (cooldown.active) {
+    return reply(
+      `⏳ এই কমান্ডটি আবার ব্যবহার করতে ${cooldown.remaining} সেকেন্ড অপেক্ষা করো।`
+    );
+  }
+
   try {
-    const result = await command.onStart({
-      ...context,
-      args,
-      commandName: name,
-      permission,
-      config: command.config
-    });
+    setCooldown(cooldown);
+
+    const result = await command.onStart(
+      makeCommandContext(
+        context,
+        command,
+        args,
+        name,
+        permission
+      )
+    );
 
     rememberReply(
       result,
@@ -387,3 +504,14 @@ export async function handleCommand(context) {
 export function getCommands() {
   return commands;
 }
+
+export function getCommand(name) {
+  return commands.get(normalize(name)) || null;
+}
+
+export default {
+  loadCommands,
+  handleCommand,
+  getCommands,
+  getCommand
+};
