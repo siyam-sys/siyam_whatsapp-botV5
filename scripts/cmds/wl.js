@@ -1,203 +1,150 @@
 
 import fs from "fs-extra";
-import moment from "moment-timezone";
+import path from "path";
+import { AUTHOR, CONFIG } from "../../config.js";
+import { loadCommands, getCommands } from "../../core/commandHandler.js";
 
-import {
-  CONFIG,
-  AUTHOR,
-  isOwner,
-  isBotAdmin,
-  normalizeWhatsAppId
-} from "../../config.js";
+const commandDir = path.resolve(process.cwd(), CONFIG.COMMAND_DIR);
 
-const FILE = CONFIG.DATABASE.WHITELIST_FILE;
-
-const footer =
-  "───────────────\n» 🧚‍♀️ ‿𝗡𝗜𝗝𝗛𝗨𝗠 𝗖𝗛𝗔𝗧𝗕𝗢𝗧";
-
-async function readList() {
-  await fs.ensureDir(CONFIG.DATABASE.DIRECTORY);
-
-  if (!(await fs.pathExists(FILE))) {
-    return {
-      enabled: false,
-      ids: [...CONFIG.WHITELIST_IDS]
-    };
-  }
-
-  const data = await fs.readJson(FILE);
-
-  return {
-    enabled: Boolean(data.enabled),
-    ids: Array.isArray(data.ids)
-      ? [...new Set(
-          data.ids.map(normalizeWhatsAppId).filter(Boolean)
-        )]
-      : [...CONFIG.WHITELIST_IDS]
-  };
+function isManager(permission) {
+  return (permission?.roleLevel ?? 0) >= 2 ||
+    ["OWNER", "BOT_ADMIN"].includes(permission?.role);
 }
 
-async function save(data) {
-  await fs.ensureDir(CONFIG.DATABASE.DIRECTORY);
-  await fs.writeJson(FILE, data, { spaces: 2 });
+function safeFileName(value = "") {
+  const name = path.basename(String(value)).replace(/\.js$/i, "");
+  return /^[a-zA-Z0-9_-]{1,64}$/.test(name) ? `${name}.js` : null;
+}
+
+function removeFromRegistry(fileName) {
+  const map = getCommands();
+  const base = path.basename(fileName, ".js").toLowerCase();
+  const target = map.get(base);
+  if (!target) return false;
+
+  for (const [key, command] of map.entries()) {
+    if (command === target) map.delete(key);
+  }
+  return true;
 }
 
 export default {
   config: {
-    name: "wl",
-    version: "3.0",
+    name: "cmd",
+    aliases: ["command"],
+    version: "2.0.0",
     author: AUTHOR,
-    countDown: 5,
     role: 2,
-    category: "owner",
-    description: "Manage whitelist UID",
-    guide:
-      "{pn} add <uid>\n" +
-      "{pn} remove <uid>\n" +
-      "{pn} list\n" +
-      "{pn} on / off"
+    category: "SYSTEM",
+    shortDescription: "Manage command files",
+    longDescription: "Load, unload, reload and install trusted command files.",
+    usage: "{pn} load <file> | unload <file> | loadAll | unloadAll | install <raw-url> <file.js>"
   },
 
-  onStart: async function ({ args = [], senderJid, reply }) {
-    if (!isBotAdmin(senderJid)) {
-      return reply(
-        "🚫 𝗢𝗻𝗹𝘆 𝗠𝘆 𝗕𝗼𝘀𝘀 𝐒𝐈𝐘𝐀𝐌 তুই আবাল 🌚 সর এখান থেকে🙄🐸"
-      );
+  onStart: async ({ args = [], reply, permission }) => {
+    if (!isManager(permission)) {
+      return reply("⛔ শুধু Bot Admin ব্যবহার করতে পারবেন।");
     }
 
+    const action = String(args[0] || "").toLowerCase();
+    const fileName = safeFileName(args[1] || "");
+
     try {
-      const action = String(args[0] || "").toLowerCase();
-      const data = await readList();
-
-      switch (action) {
-        case "add":
-        case "-a": {
-          if (!args[1]) {
-            return reply(
-              "» 👑 𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍 👑\n" +
-              "───────────────\n" +
-              "» ⚠️ 𝐆𝐢𝐯𝐞 𝐔𝐈𝐃 𝐨𝐫 𝐍𝐮𝐦𝐛𝐞𝐫!\n" +
-              footer
-            );
-          }
-
-          const ids = args
-            .slice(1)
-            .map(normalizeWhatsAppId)
-            .filter(Boolean);
-
-          const added = [];
-
-          for (const id of ids) {
-            if (!data.ids.includes(id)) {
-              data.ids.push(id);
-              added.push(id);
-            }
-          }
-
-          await save(data);
-
-          return reply(
-            `» 👑 𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍 👑\n` +
-            `───────────────\n` +
-            `» ✅ 𝐀𝐝𝐝𝐞𝐝:\n` +
-            `${added.join("\n") || "Already exists"}\n` +
-            footer
-          );
-        }
-
-        case "remove":
-        case "-r": {
-          if (!args[1]) {
-            return reply(
-              "» 👑 𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍 👑\n" +
-              "───────────────\n" +
-              "» ⚠️ 𝐆𝐢𝐯𝐞 𝐔𝐈𝐃 𝐨𝐫 𝐍𝐮𝐦𝐛𝐞𝐫!\n" +
-              footer
-            );
-          }
-
-          const ids = args
-            .slice(1)
-            .map(normalizeWhatsAppId)
-            .filter(Boolean);
-
-          const ownerId = normalizeWhatsAppId(CONFIG.OWNER_ID);
-
-          const protectedIds = ids.filter(id => id === ownerId);
-          const removableIds = ids.filter(id => id !== ownerId);
-
-          const removed = removableIds.filter(
-            id => data.ids.includes(id)
-          );
-
-          data.ids = data.ids.filter(
-            id => !removableIds.includes(id)
-          );
-
-          await save(data);
-
-          return reply(
-            `» 👑 𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍 👑\n` +
-            `───────────────\n` +
-            `» ✅ 𝐑𝐞𝐦𝐨𝐯𝐞𝐝:\n` +
-            `${removed.join("\n") || "No matching UID"}\n` +
-            `${protectedIds.length ? "\n⚠️ Main Owner cannot be removed." : ""}` +
-            footer
-          );
-        }
-
-        case "list":
-        case "-l": {
-          return reply(
-            `» 👑 𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍 👑\n` +
-            `───────────────\n` +
-            `» 👑 𝐖𝐡𝐢𝐭𝐞𝐋𝐢𝐬𝐭 𝐔𝐬𝐞𝐫𝐬:\n` +
-            `${data.ids.map(id => "• " + id).join("\n") || "Empty"}\n` +
-            `» 🔐 Status: ${data.enabled ? "ON" : "OFF"}\n` +
-            footer
-          );
-        }
-
-        case "on":
-        case "off": {
-          data.enabled = action === "on";
-
-          await save(data);
-
-          const time = moment()
-            .tz("Asia/Dhaka")
-            .format("hh:mm A");
-
-          const date = moment()
-            .tz("Asia/Dhaka")
-            .format("DD MMMM YYYY");
-
-          return reply(
-            `👑  𝆠፝𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍  👑\n\n` +
-            `𝆠፝𝐖𝐇𝐈𝐓𝐄 𝐋𝐈𝐒𝐓 𝐌𝐎𝐃𝐄 ${data.enabled ? "𝐄𝐍𝐀𝐁𝐋𝐄𝐃" : "𝐃𝐈𝐒𝐀𝐁𝐋𝐄𝐃"}\n\n` +
-            `🔐  𝆠፝𝐀𝐂𝐂𝐄𝐒𝐒 :\n` +
-            `   ${data.enabled ? "শুধু তালিকাভুক্ত ব্যবহারকারী" : "এখন সবাই বট ব্যবহার করতে পারবে"}\n\n` +
-            `📅  𝆠፝𝐃𝐚𝐭𝐞 : ${date}\n` +
-            `⏰  𝆠፝𝐓𝐢𝐦𝐞 : ${time}\n\n` +
-            `👑  𝆠፝𝐍𝐈𝐉𝐇𝐔𝐌 𝐂𝐇𝐀𝐓 𝐁𝐎𝐓  👑`
-          );
-        }
-
-        default:
-          return reply(
-            "» 👑 𝐖𝐇𝐈𝐓𝐄𝐋𝐈𝐒𝐓\n\n" +
-            "wl add <UID>\n" +
-            "wl remove <UID>\n" +
-            "wl list\n" +
-            "wl on\n" +
-            "wl off\n\n" +
-            footer
-          );
+      if (["loadall", "load-all", "reload", "reloadall"].includes(action)) {
+        await loadCommands();
+        return reply(`✅ সব Command Load হয়েছে। Loaded: ${getCommands().size}`);
       }
+
+      if (action === "load" || action === "unload") {
+        if (!fileName) return reply("⚠️ ফাইলের নাম দিন।");
+
+        if (action === "unload") {
+          const removed = removeFromRegistry(fileName);
+          return reply(removed
+            ? `✅ ${fileName} Unload হয়েছে।`
+            : `⚠️ ${fileName} Load করা নেই।`);
+        }
+
+        if (!(await fs.pathExists(path.join(commandDir, fileName)))) {
+          return reply(`❌ ${fileName} পাওয়া যায়নি।`);
+        }
+
+        await loadCommands();
+        const loaded = getCommands().has(path.basename(fileName, ".js").toLowerCase());
+
+        return reply(loaded ? `✅ ${fileName} Load হয়েছে।` : `❌ ${fileName} Load হয়নি।`);
+      }
+
+      if (["unloadall", "unload-all"].includes(action)) {
+        const map = getCommands();
+        const self = map.get("cmd");
+        map.clear();
+
+        if (self) {
+          map.set("cmd", self);
+          for (const alias of self.config.aliases || []) {
+            map.set(String(alias).toLowerCase(), self);
+          }
+        }
+
+        return reply("✅ cmd বাদে বাকি Command Unload হয়েছে।");
+      }
+
+      if (action === "install") {
+        const url = args[1];
+        const installName = safeFileName(args[2] || "");
+
+        if (!url || !installName || !/^https:\/\/raw\.githubusercontent\.com\//i.test(url)) {
+          return reply("⚠️ Trusted raw GitHub URL এবং file name দিন।");
+        }
+
+        const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const source = await response.text();
+
+        if (!source.trim() || source.length > 250000) {
+          throw new Error("ফাইল খালি অথবা অনেক বড়।");
+        }
+
+        if (
+          !source.includes(`AUTHOR: ${AUTHOR}`) &&
+          !source.includes(`author: "${AUTHOR}"`) &&
+          !source.includes(`author: '${AUTHOR}'`)
+        ) {
+          throw new Error("AUTHOR format মেলেনি।");
+        }
+
+        const destination = path.join(commandDir, installName);
+
+        if (await fs.pathExists(destination)) {
+          return reply("⚠️ এই ফাইল আগে থেকেই আছে।");
+        }
+
+        await fs.writeFile(destination, source, "utf8");
+        await loadCommands();
+
+        const loaded = getCommands().has(path.basename(installName, ".js").toLowerCase());
+
+        if (!loaded) {
+          await fs.remove(destination);
+          throw new Error("Command Load হয়নি।");
+        }
+
+        return reply(`✅ ${installName} Install হয়েছে।`);
+      }
+
+      return reply(
+        "🧩 CMD MANAGER\n\n" +
+        "/cmd load <file>\n" +
+        "/cmd loadAll\n" +
+        "/cmd unload <file>\n" +
+        "/cmd unloadAll\n" +
+        "/cmd install <raw GitHub URL> <file.js>"
+      );
     } catch (error) {
-      console.error("[WL]", error);
-      return reply("❌ Whitelist আপডেট করতে সমস্যা হয়েছে।");
+      console.error("[CMD MANAGER]", error);
+      return reply(`❌ কাজটি হয়নি: ${error.message}`);
     }
   }
 };
