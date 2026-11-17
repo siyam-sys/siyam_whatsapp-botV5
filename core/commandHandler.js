@@ -15,12 +15,60 @@ const logger = createLogger();
 
 const commands = new Map();
 
+// Stores messages sent by commands that support onReply.
+const replySessions = new Map();
+
+const MAX_REPLY_SESSIONS = 500;
+const REPLY_SESSION_TTL = 24 * 60 * 60 * 1000;
+
+function rememberReply(result, command, jid) {
+  const messageId = result?.key?.id;
+
+  if (!messageId || typeof command.onReply !== "function") {
+    return;
+  }
+
+  replySessions.set(messageId, {
+    command,
+    jid,
+    createdAt: Date.now()
+  });
+
+  while (replySessions.size > MAX_REPLY_SESSIONS) {
+    const oldestId = replySessions.keys().next().value;
+    replySessions.delete(oldestId);
+  }
+}
+
+function findReplySession(context) {
+  const messageId = context.quotedMessageId;
+
+  if (!messageId) return null;
+
+  const session = replySessions.get(messageId);
+
+  if (!session) return null;
+
+  if (Date.now() - session.createdAt > REPLY_SESSION_TTL) {
+    replySessions.delete(messageId);
+    return null;
+  }
+
+  // Only accept the reply in the same chat where the bot answered.
+  if (session.jid !== context.jid) {
+    return null;
+  }
+
+  return session;
+}
+
 function hasAuthorMarker(source) {
   return source.includes(`AUTHOR: ${AUTHOR}`);
 }
 
 export async function loadCommands() {
   commands.clear();
+  replySessions.clear();
 
   await fs.ensureDir(CONFIG.COMMAND_DIR);
 
@@ -81,6 +129,27 @@ export async function loadCommands() {
 export async function handleCommand(context) {
   const { body, reply } = context;
 
+  // First check whether this message replies to a bot response.
+  const replySession = findReplySession(context);
+
+  if (replySession) {
+    const command = replySession.command;
+
+    try {
+      const result = await command.onReply(context);
+
+      // Register the new bot response so the conversation can continue.
+      rememberReply(result, command, context.jid);
+
+    } catch (error) {
+      handleError(error, `Reply Command: ${command.config.name}`);
+      await reply("❌ রিপ্লাই প্রসেস করতে সমস্যা হয়েছে।");
+    }
+
+    return;
+  }
+
+  // Normal prefix command handling.
   if (!body.startsWith(CONFIG.PREFIX)) return;
 
   const input = body.slice(CONFIG.PREFIX.length).trim();
@@ -112,13 +181,16 @@ export async function handleCommand(context) {
   }
 
   try {
-    await command.onStart({
+    const result = await command.onStart({
       ...context,
       args,
       commandName: name,
       permission,
       config: command.config
     });
+
+    // Save the bot's sent message ID for future quoted replies.
+    rememberReply(result, command, context.jid);
 
   } catch (error) {
     handleError(error, `Command: ${name}`);
