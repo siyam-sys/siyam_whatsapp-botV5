@@ -1,19 +1,45 @@
 
-// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
+ // AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
 // WARNING: AUTHOR পরিবর্তন করলে এই ফাইল Disable হবে।
 
 import fs from "fs-extra";
 import pino from "pino";
 
-import makeWASocket, {
-  useMultiFileAuthState
-} from "@whiskeysockets/baileys";
+import * as baileys from "@whiskeysockets/baileys";
 
 import { CONFIG } from "../config.js";
 import { requestPairing } from "./pairing.js";
 import { createLogger } from "../system/logger.js";
 
 const logger = createLogger();
+
+// Compatible Baileys export resolver
+const defaultExport = baileys.default;
+
+const makeWASocket =
+  typeof defaultExport === "function"
+    ? defaultExport
+    : typeof defaultExport?.default === "function"
+      ? defaultExport.default
+      : typeof baileys.makeWASocket === "function"
+        ? baileys.makeWASocket
+        : null;
+
+const useMultiFileAuthState =
+  baileys.useMultiFileAuthState ||
+  defaultExport?.useMultiFileAuthState;
+
+if (typeof makeWASocket !== "function") {
+  throw new Error(
+    "Baileys socket export is not a function. Check installed package version."
+  );
+}
+
+if (typeof useMultiFileAuthState !== "function") {
+  throw new Error(
+    "Baileys useMultiFileAuthState export is missing."
+  );
+}
 
 export async function connectToWhatsApp() {
   await fs.ensureDir(CONFIG.SESSION_DIR);
@@ -34,8 +60,11 @@ export async function connectToWhatsApp() {
       CONFIG.VERSION
     ],
 
+    printQRInTerminal: false,
     markOnlineOnConnect: false,
-    syncFullHistory: false
+    syncFullHistory: false,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000
   });
 
   // Save authentication credentials
@@ -43,13 +72,11 @@ export async function connectToWhatsApp() {
 
   let pairingStarted = false;
 
-  // Request pairing only when WhatsApp socket is ready
+  // Wait for WhatsApp connection update
   sock.ev.on("connection.update", async (update) => {
     const { qr, connection } = update;
 
-    if (
-      connection === "open"
-    ) {
+    if (connection === "open") {
       pairingStarted = true;
       return;
     }
@@ -64,46 +91,35 @@ export async function connectToWhatsApp() {
     }
 
     if (!CONFIG.BOT_PHONE_NUMBER) {
-      logger.error(
-        "BOT_PHONE_NUMBER is missing. Check your .env file."
-      );
+      logger.error("Bot phone number is missing.");
       return;
     }
 
     pairingStarted = true;
 
-    logger.info(
-      "WhatsApp is ready. Requesting pairing code..."
-    );
+    logger.info("WhatsApp is ready for pairing.");
 
     try {
       const code = await requestPairing(sock);
 
       if (!code) {
         pairingStarted = false;
-
-        logger.warn(
-          "Pairing code was not generated. Check the error above."
-        );
+        logger.error("Pairing code generation failed.");
+        return;
       }
+
+      logger.success("PAIRING CODE GENERATED");
+      logger.info(code);
+
     } catch (error) {
       pairingStarted = false;
 
       logger.error(
-        "Pairing code generation failed",
+        "Pairing request failed",
         error
       );
     }
   });
-
-  if (
-    !state.creds.registered &&
-    !CONFIG.BOT_PHONE_NUMBER
-  ) {
-    logger.error(
-      "Please configure BOT_PHONE_NUMBER in .env"
-    );
-  }
 
   return sock;
 }
