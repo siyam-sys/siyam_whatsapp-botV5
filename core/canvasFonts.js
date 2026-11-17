@@ -12,37 +12,34 @@ const FONT_DIR = path.join(__dirname, "..", "assets", "fonts");
 let registered = false;
 
 export async function registerCanvasFonts() {
-  if (registered) return true;
+  if (registered) return;
 
   await fs.ensureDir(FONT_DIR);
 
   const fonts = [
-    {
-      file: "NotoSansBengali-Regular.ttf",
-      family: "Noto Bengali"
-    },
-    {
-      file: "NotoSansBengali-Bold.ttf",
-      family: "Noto Bengali"
-    }
+    "NotoSansBengali-Regular.ttf",
+    "NotoSansBengali-Bold.ttf"
   ];
 
-  for (const font of fonts) {
-    const fontPath = path.join(FONT_DIR, font.file);
+  for (const file of fonts) {
+    const fontPath = path.join(FONT_DIR, file);
 
-    if (await fs.pathExists(fontPath)) {
-      try {
-        GlobalFonts.registerFromPath(fontPath, font.family);
-      } catch (error) {
-        console.error("[CANVAS FONT]", error.message);
-      }
+    if (!(await fs.pathExists(fontPath))) {
+      console.warn(`[CANVAS FONT] Missing: ${file}`);
+      continue;
+    }
+
+    try {
+      GlobalFonts.registerFromPath(fontPath, "Noto Bengali");
+      console.log(`[CANVAS FONT] Loaded: ${file}`);
+    } catch (error) {
+      console.error(`[CANVAS FONT] ${file}:`, error.message);
     }
   }
 
   registered = true;
-  return true;
 }
 
 export function getCanvasFont(size = 30, weight = "normal") {
   return `${weight} ${size}px "Noto Bengali", Arial, sans-serif`;
-}
+  }
