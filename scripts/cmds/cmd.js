@@ -1,16 +1,14 @@
-// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
-// WhatsApp command manager adapted from the original Messenger cmd.js.
 
 import fs from "fs-extra";
 import path from "path";
-import { pathToFileURL } from "url";
 import { AUTHOR, CONFIG } from "../../config.js";
 import { loadCommands, getCommands } from "../../core/commandHandler.js";
 
 const commandDir = path.resolve(process.cwd(), CONFIG.COMMAND_DIR);
 
 function isManager(permission) {
-  return ["OWNER", "BOT_ADMIN"].includes(permission?.role);
+  return (permission?.roleLevel ?? 0) >= 2 ||
+    ["OWNER", "BOT_ADMIN"].includes(permission?.role);
 }
 
 function safeFileName(value = "") {
@@ -36,7 +34,7 @@ export default {
     aliases: ["command"],
     version: "2.0.0",
     author: AUTHOR,
-    role: "BOT_ADMIN",
+    role: 2,
     category: "SYSTEM",
     shortDescription: "Manage command files",
     longDescription: "Load, unload, reload and install trusted command files.",
@@ -45,7 +43,7 @@ export default {
 
   onStart: async ({ args = [], reply, permission }) => {
     if (!isManager(permission)) {
-      return reply("⛔ এই কমান্ড শুধু Bot Admin ব্যবহার করতে পারবেন।");
+      return reply("⛔ শুধু Bot Admin ব্যবহার করতে পারবেন।");
     }
 
     const action = String(args[0] || "").toLowerCase();
@@ -54,83 +52,99 @@ export default {
     try {
       if (["loadall", "load-all", "reload", "reloadall"].includes(action)) {
         await loadCommands();
-        return reply(`✅ সব Command আবার Load করা হয়েছে।\n📊 Loaded: ${getCommands().size}`);
+        return reply(`✅ সব Command Load হয়েছে। Loaded: ${getCommands().size}`);
       }
 
       if (action === "load" || action === "unload") {
-        if (!fileName) return reply("⚠️ ফাইলের নাম দিন। উদাহরণ: /cmd load gan");
+        if (!fileName) return reply("⚠️ ফাইলের নাম দিন।");
 
         if (action === "unload") {
           const removed = removeFromRegistry(fileName);
           return reply(removed
-            ? `✅ ${fileName} মেমোরি থেকে Unload হয়েছে। ফাইলটি মুছে ফেলা হয়নি।`
-            : `⚠️ ${fileName} বর্তমানে Load করা নেই।`);
+            ? `✅ ${fileName} Unload হয়েছে।`
+            : `⚠️ ${fileName} Load করা নেই।`);
         }
 
         if (!(await fs.pathExists(path.join(commandDir, fileName)))) {
-          return reply(`❌ ${fileName} ফাইলটি পাওয়া যায়নি।`);
+          return reply(`❌ ${fileName} পাওয়া যায়নি।`);
         }
+
         await loadCommands();
         const loaded = getCommands().has(path.basename(fileName, ".js").toLowerCase());
-        return reply(loaded ? `✅ ${fileName} Load হয়েছে।` : `❌ ${fileName} Load হয়নি। Author/config পরীক্ষা করুন।`);
+
+        return reply(loaded ? `✅ ${fileName} Load হয়েছে।` : `❌ ${fileName} Load হয়নি।`);
       }
 
       if (["unloadall", "unload-all"].includes(action)) {
         const map = getCommands();
         const self = map.get("cmd");
         map.clear();
+
         if (self) {
           map.set("cmd", self);
-          for (const alias of self.config.aliases || []) map.set(String(alias).toLowerCase(), self);
+          for (const alias of self.config.aliases || []) {
+            map.set(String(alias).toLowerCase(), self);
+          }
         }
-        return reply("✅ cmd কমান্ড বাদে বাকি সব Command মেমোরি থেকে Unload হয়েছে।");
+
+        return reply("✅ cmd বাদে বাকি Command Unload হয়েছে।");
       }
 
       if (action === "install") {
         const url = args[1];
         const installName = safeFileName(args[2] || "");
+
         if (!url || !installName || !/^https:\/\/raw\.githubusercontent\.com\//i.test(url)) {
-          return reply("⚠️ ব্যবহার: /cmd install https://raw.githubusercontent.com/owner/repo/branch/file.js file.js\nশুধু trusted raw GitHub URL ব্যবহার করুন।");
+          return reply("⚠️ Trusted raw GitHub URL এবং file name দিন।");
         }
 
         const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-        if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
         const source = await response.text();
-        if (!source.trim() || source.length > 250_000) throw new Error("ফাইল খালি অথবা অনুমোদিত সাইজের চেয়ে বড়।");
-        if (!source.includes(`AUTHOR: ${AUTHOR}`) || !source.includes(`author: "${AUTHOR}"`) && !source.includes(`author: '${AUTHOR}'`)) {
-          throw new Error("এই ফাইলটি তোমার WhatsApp bot-এর AUTHOR format মেনে চলে না।");
+
+        if (!source.trim() || source.length > 250000) {
+          throw new Error("ফাইল খালি অথবা অনেক বড়।");
+        }
+
+        if (
+          !source.includes(`AUTHOR: ${AUTHOR}`) &&
+          !source.includes(`author: "${AUTHOR}"`) &&
+          !source.includes(`author: '${AUTHOR}'`)
+        ) {
+          throw new Error("AUTHOR format মেলেনি।");
         }
 
         const destination = path.join(commandDir, installName);
+
         if (await fs.pathExists(destination)) {
-          return reply(`⚠️ ${installName} আগে থেকেই আছে। আগে backup নিয়ে পুরোনো ফাইল সরিয়ে তারপর Install করো।`);
+          return reply("⚠️ এই ফাইল আগে থেকেই আছে।");
         }
 
-        // Only trusted source code should be installed: loading a command executes its JavaScript.
         await fs.writeFile(destination, source, "utf8");
         await loadCommands();
+
         const loaded = getCommands().has(path.basename(installName, ".js").toLowerCase());
+
         if (!loaded) {
           await fs.remove(destination);
-          throw new Error("ফাইলটি Command হিসেবে Load হয়নি; নিরাপত্তার জন্য ডাউনলোড করা ফাইল সরানো হয়েছে।");
+          throw new Error("Command Load হয়নি।");
         }
-        return reply(`✅ ${installName} Install ও Load হয়েছে।`);
+
+        return reply(`✅ ${installName} Install হয়েছে।`);
       }
 
       return reply(
-        "┏━━━━━━━━━━━━━━━━━━┓\n" +
-        "       🧩 𝐂𝐌𝐃 𝐌𝐀𝐍𝐀𝐆𝐄𝐑\n" +
-        "┗━━━━━━━━━━━━━━━━━━┛\n\n" +
-        "➤ /cmd load <file>\n" +
-        "➤ /cmd loadAll\n" +
-        "➤ /cmd unload <file>\n" +
-        "➤ /cmd unloadAll\n" +
-        "➤ /cmd install <raw GitHub URL> <file.js>\n\n" +
-        "⚠️ শুধু পরিচিত ও বিশ্বাসযোগ্য কোড Install করবে।"
+        "🧩 CMD MANAGER\n\n" +
+        "/cmd load <file>\n" +
+        "/cmd loadAll\n" +
+        "/cmd unload <file>\n" +
+        "/cmd unloadAll\n" +
+        "/cmd install <raw GitHub URL> <file.js>"
       );
     } catch (error) {
       console.error("[CMD MANAGER]", error);
-      return reply(`❌ কাজটি সম্পন্ন হয়নি: ${error.message}`);
+      return reply(`❌ কাজটি হয়নি: ${error.message}`);
     }
   }
 };
