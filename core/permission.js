@@ -6,7 +6,8 @@ import {
   isOwner,
   isBotAdmin,
   isWhitelisted,
-  normalizeWhatsAppId
+  normalizeWhatsAppId,
+  getConfiguredRole
 } from "../config.js";
 
 import { COMMAND_CONFIG } from "../configCommands.js";
@@ -69,19 +70,35 @@ async function getWhitelist() {
 }
 
 export async function checkPermission(context, commandConfig = {}) {
-  const { sock, jid, senderJid, isGroup } = context;
+  const {
+    sock,
+    jid,
+    senderJid,
+    senderUid,
+    senderAltJid,
+    isGroup
+  } = context;
 
-  // MAIN OWNER: UNLIMITED PERMISSION
-  if (isOwner(senderJid)) {
+  const identities = [
+    senderJid,
+    senderUid,
+    senderAltJid
+  ].filter(Boolean);
+
+  // =========================================
+  // MAIN OWNER BYPASS — সব Role ও Mode-এর আগে
+  // =========================================
+  if (isOwner(...identities)) {
     return {
       allowed: true,
       role: "OWNER",
       roleLevel: 3,
-      reason: "Main Owner"
+      reason: "Main Owner Unlimited Permission"
     };
   }
 
-  const botAdmin = isBotAdmin(senderJid);
+  const configuredRole = getConfiguredRole(...identities);
+  const botAdmin = isBotAdmin(...identities);
 
   let groupAdmin = false;
 
@@ -89,24 +106,31 @@ export async function checkPermission(context, commandConfig = {}) {
     try {
       const metadata = await sock.groupMetadata(jid);
 
-      groupAdmin = (metadata.participants || []).some(
-        participant =>
-          normalizeWhatsAppId(participant.id) ===
-            normalizeWhatsAppId(senderJid) &&
-          ["admin", "superadmin"].includes(participant.admin)
-      );
-    } catch (error) {
+      groupAdmin = (metadata.participants || []).some(participant => {
+        const participantIds = [
+          participant.id,
+          participant.lid,
+          participant.phoneNumber
+        ].filter(Boolean);
+
+        const sameUser = participantIds.some(id =>
+          identities.some(sender =>
+            normalizeWhatsAppId(id) === normalizeWhatsAppId(sender)
+          )
+        );
+
+        return sameUser &&
+          ["admin", "superadmin"].includes(participant.admin);
+      });
+    } catch {
       groupAdmin = false;
     }
   }
 
-  let role = 0;
-  let roleName = "USER";
+  let role = configuredRole;
+  let roleName = ["USER", "GROUP_ADMIN", "BOT_ADMIN", "OWNER"][role] || "USER";
 
-  if (botAdmin) {
-    role = 2;
-    roleName = "BOT_ADMIN";
-  } else if (groupAdmin) {
+  if (groupAdmin && role < 1) {
     role = 1;
     roleName = "GROUP_ADMIN";
   }
@@ -138,9 +162,11 @@ export async function checkPermission(context, commandConfig = {}) {
   const whitelist = await getWhitelist();
 
   const whitelisted =
-    isWhitelisted(senderJid) ||
+    isWhitelisted(...identities) ||
     whitelist.ids.some(id =>
-      normalizeWhatsAppId(id) === normalizeWhatsAppId(senderJid)
+      identities.some(sender =>
+        normalizeWhatsAppId(id) === normalizeWhatsAppId(sender)
+      )
     );
 
   let mode = CONFIG.MESSAGE_MODE;
@@ -156,7 +182,7 @@ export async function checkPermission(context, commandConfig = {}) {
     mode = "whiteListMode";
   }
 
-  if (mode === "ownerOnly") {
+  if (mode === "ownerOnly" && !botAdmin) {
     return {
       allowed: false,
       role: roleName,
