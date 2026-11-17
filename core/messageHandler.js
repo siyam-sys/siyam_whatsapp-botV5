@@ -72,7 +72,7 @@ export function handleMessages(sock) {
       try {
         if (!message?.message || message.key?.fromMe) continue;
 
-        const jid = message.key.remoteJid;
+        const jid = message.key?.remoteJid;
 
         if (!jid || jid === "status@broadcast") continue;
 
@@ -81,37 +81,30 @@ export function handleMessages(sock) {
         if (isGroup && !CONFIG.ALLOW_GROUP) continue;
         if (!isGroup && !CONFIG.ALLOW_INBOX) continue;
 
-        const body = getMessageText(message);
-
-        if (!body) continue;
-
         const senderJid = isGroup
           ? message.key.participant || message.participant || ""
           : jid;
 
-        const quotedMessageId = getQuotedMessageId(message);
-
         const context = {
           sock,
           message,
-          body,
+          body: getMessageText(message),
           jid,
           senderJid,
           isGroup,
-          quotedMessageId,
+          quotedMessageId: getQuotedMessageId(message),
           pushName: message.pushName || "User",
 
           reply: async text => {
             return sock.sendMessage(
               jid,
-              { text: String(text) },
+              { text: String(text ?? "") },
               { quoted: message }
             );
           }
         };
 
         await handleCommand(context);
-
       } catch (error) {
         logger.error("Message handler error", error);
       }
