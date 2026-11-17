@@ -1,3 +1,4 @@
+// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
 
 import { CONFIG, isOwner } from "../config.js";
 import { handleCommand } from "./commandHandler.js";
@@ -8,13 +9,14 @@ const logger = createLogger();
 function unwrapMessage(message) {
   let current = message;
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 8; i++) {
     if (!current) break;
 
     const next =
       current.ephemeralMessage?.message ||
       current.viewOnceMessage?.message ||
       current.viewOnceMessageV2?.message ||
+      current.viewOnceMessageV2Extension?.message ||
       current.documentWithCaptionMessage?.message;
 
     if (!next) break;
@@ -30,7 +32,7 @@ function getMessageText(message) {
 
   if (!content) return "";
 
-  return (
+  return String(
     content.conversation ||
     content.extendedTextMessage?.text ||
     content.imageMessage?.caption ||
@@ -39,69 +41,117 @@ function getMessageText(message) {
     content.buttonsResponseMessage?.selectedButtonId ||
     content.listResponseMessage?.singleSelectReply?.selectedRowId ||
     content.templateButtonReplyMessage?.selectedId ||
+    content.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
     ""
   ).trim();
 }
 
-function getQuotedMessageId(message) {
+function getContextInfo(message) {
   const content = unwrapMessage(message?.message);
 
   if (!content) return null;
 
-  const contextInfo =
-    content.extendedTextMessage?.contextInfo ||
-    content.imageMessage?.contextInfo ||
-    content.videoMessage?.contextInfo ||
-    content.documentMessage?.contextInfo ||
-    content.audioMessage?.contextInfo ||
-    content.stickerMessage?.contextInfo ||
-    content.buttonsResponseMessage?.contextInfo ||
-    content.listResponseMessage?.contextInfo ||
-    content.templateButtonReplyMessage?.contextInfo;
+  const messageTypes = [
+    "extendedTextMessage",
+    "imageMessage",
+    "videoMessage",
+    "documentMessage",
+    "audioMessage",
+    "stickerMessage",
+    "buttonsResponseMessage",
+    "listResponseMessage",
+    "templateButtonReplyMessage"
+  ];
 
-  return contextInfo?.stanzaId || null;
+  for (const type of messageTypes) {
+    const info = content[type]?.contextInfo;
+
+    if (info) return info;
+  }
+
+  return null;
+}
+
+function getQuotedMessageId(message) {
+  return getContextInfo(message)?.stanzaId || null;
+}
+
+function getSender(message, isGroup) {
+  if (isGroup) {
+    return (
+      message.key?.participant ||
+      message.participant ||
+      ""
+    );
+  }
+
+  return (
+    message.key?.remoteJidAlt ||
+    message.key?.remoteJid ||
+    ""
+  );
 }
 
 export function handleMessages(sock) {
+  if (!sock?.ev) {
+    throw new Error("Invalid WhatsApp socket passed to handleMessages()");
+  }
+
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    if (type !== "notify") return;
+    if (type !== "notify" && type !== "append") return;
 
     for (const message of messages || []) {
       try {
-        if (!message?.message || message.key?.fromMe) continue;
+        if (!message?.message || !message.key) continue;
 
-        const jid = message.key?.remoteJid;
+        const jid = message.key.remoteJid;
 
         if (!jid || jid === "status@broadcast") continue;
 
         const isGroup = jid.endsWith("@g.us");
 
-        const rawSenderJid = isGroup
-          ? message.key.participant || message.participant || ""
-          : jid;
+        const rawSenderJid = getSender(message, isGroup);
 
         const senderAltJid = isGroup
-          ? message.key.participantAlt ||
-            message.participantAlt ||
-            ""
-          : message.key.remoteJidAlt || "";
+          ? (
+              message.key.participantAlt ||
+              message.participantAlt ||
+              ""
+            )
+          : (
+              message.key.remoteJidAlt ||
+              ""
+            );
 
-        // Owner-এর ফোন নম্বর পাওয়া গেলে সেটিকে senderJid হিসেবে ব্যবহার
-        // যাতে পুরোনো command-এর isOwner(senderJid) check-ও কাজ করে।
-        const senderJid = isOwner(rawSenderJid, senderAltJid)
-          ? (isOwner(senderAltJid) ? senderAltJid : rawSenderJid)
-          : rawSenderJid;
-
-        const senderUid = rawSenderJid;
-
-        // Owner identity শনাক্ত হলে group/inbox restriction-ও bypass
         const mainOwner = isOwner(
           rawSenderJid,
           senderAltJid
         );
 
-        if (isGroup && !CONFIG.ALLOW_GROUP && !mainOwner) continue;
-        if (!isGroup && !CONFIG.ALLOW_INBOX && !mainOwner) continue;
+        // Bot নিজের পাঠানো মেসেজ পুনরায় কমান্ড হিসেবে চালাবে না।
+        if (message.key.fromMe) continue;
+
+        if (!rawSenderJid) continue;
+
+        const senderJid = mainOwner
+          ? (
+              isOwner(senderAltJid)
+                ? senderAltJid
+                : rawSenderJid
+            )
+          : rawSenderJid;
+
+        const senderUid = rawSenderJid;
+
+        if (isGroup && !CONFIG.ALLOW_GROUP && !mainOwner) {
+          continue;
+        }
+
+        if (!isGroup && !CONFIG.ALLOW_INBOX && !mainOwner) {
+          continue;
+        }
+
+        const contextInfo = getContextInfo(message);
 
         const context = {
           sock,
@@ -112,14 +162,21 @@ export function handleMessages(sock) {
           senderUid,
           senderAltJid,
           isGroup,
-          quotedMessageId: getQuotedMessageId(message),
+          isOwner: mainOwner,
           pushName: message.pushName || "User",
+          quotedMessageId: getQuotedMessageId(message),
+          quotedMessage: contextInfo?.quotedMessage || null,
+          mentionedJid: contextInfo?.mentionedJid || [],
 
           reply: async text => {
             return sock.sendMessage(
               jid,
-              { text: String(text ?? "") },
-              { quoted: message }
+              {
+                text: String(text ?? "")
+              },
+              {
+                quoted: message
+              }
             );
           }
         };
@@ -131,3 +188,5 @@ export function handleMessages(sock) {
     }
   });
 }
+
+export default handleMessages;
