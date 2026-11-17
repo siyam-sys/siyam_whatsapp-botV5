@@ -1,49 +1,67 @@
-const config = require("../config");
 
-module.exports = {
-  name: "pp",
-  aliases: ["profile", "avatar"],
-  version: "1.0.1",
-  author: "𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍",
-  role: 0,
-  category: "utility",
-  shortDescription: "Shows profile picture",
-  longDescription: "Shows user profile picture with custom design",
-  guide: "{pn}",
+// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
 
-  execute: async (bot, msg, args) => {
-    const chatId = msg.key.remoteJid;
+import { AUTHOR } from "../../config.js";
 
-    const BOT_USERNAME = config.botUsername || "SiyamSM_2026Bot";
-    const OWNER_USERNAME = config.ownerUsername || "ri_siyam";
+export default {
+  config: {
+    name: "pp",
+    aliases: ["profile", "avatar"],
+    version: "1.0.1",
+    author: AUTHOR,
+    role: 0,
+    category: "utility",
+    shortDescription: "Shows profile picture",
+    longDescription: "Shows user profile picture with custom design",
+    guide: "{pn}"
+  },
 
+  onStart: async function ({
+    sock,
+    message,
+    jid,
+    senderJid,
+    pushName,
+    reply
+  }) {
     try {
-      let targetJid = chatId;
-
       const contextInfo =
-        msg.message?.extendedTextMessage?.contextInfo ||
-        msg.message?.imageMessage?.contextInfo ||
-        msg.message?.videoMessage?.contextInfo;
+        message.message?.extendedTextMessage?.contextInfo ||
+        message.message?.imageMessage?.contextInfo ||
+        message.message?.videoMessage?.contextInfo ||
+        message.message?.documentMessage?.contextInfo;
 
-      if (contextInfo?.participant) {
-        targetJid = contextInfo.participant;
-      }
+      const targetJid =
+        contextInfo?.participant || senderJid;
 
-      const userId = targetJid.split("@")[0];
+      const userId = targetJid
+        .split("@")[0]
+        .split(":")[0];
 
-      let firstName = "User";
+      const firstName = contextInfo?.participant
+        ? "User"
+        : (pushName || "User");
+
+      let profileUrl;
 
       try {
-        const contact = await bot.onWhatsApp(targetJid);
-        if (contact?.[0]?.exists) {
-          firstName = contact[0].notify || firstName;
-        }
-      } catch {}
+        profileUrl = await sock.profilePictureUrl(
+          targetJid,
+          "image"
+        );
+      } catch {
+        return reply(
+          `👑 𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍 👑
+───────────────
+📸 𝗣𝗥𝗢𝗙𝗜𝗟𝗘 𝗣𝗜𝗖𝗧𝗨𝗥𝗘
+👤 𝐍𝐚𝐦𝐞: ${firstName}
+🆔 𝐔𝐈𝐃: ${userId}
 
-      const profilePictureUrl = await bot.profilePictureUrl(
-        targetJid,
-        "image"
-      ).catch(() => null);
+⚠️ ইউজার কোনো প্রোফাইল পিকচার সেট করেনি!
+───────────────
+🧚‍♀️ 𝐍𝗜𝗝𝗛𝗨𝗠 𝗖𝗛𝗔𝗧𝗕𝗢𝗧`
+        );
+      }
 
       const captionText =
 `👑 𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍 👑
@@ -55,57 +73,19 @@ module.exports = {
 ───────────────
 🧚‍♀️ 𝐍𝗜𝗝𝗛𝗨𝗠 𝗖𝗛𝗔𝗧𝗕𝗢𝗧`;
 
-      const buttons = [
+      return await sock.sendMessage(
+        jid,
         {
-          buttonId: "cmd_list",
-          buttonText: { displayText: "📜 𝐂𝐌𝐃 𝐋𝐈𝐒𝐓" },
-          type: 1
+          image: { url: profileUrl },
+          caption: captionText
         },
-        {
-          buttonId: "owner_contact",
-          buttonText: { displayText: "𝐎𝐖𝐍𝐄𝐑" },
-          type: 1
-        },
-        {
-          buttonId: "add_group",
-          buttonText: { displayText: "𝐀𝐃𝐃 𝐆𝐑𝐎𝐔𝐏" },
-          type: 1
-        }
-      ];
-
-      if (profilePictureUrl) {
-        return await bot.sendMessage(
-          chatId,
-          {
-            image: { url: profilePictureUrl },
-            caption: captionText,
-            footer: "𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍",
-            buttons,
-            headerType: 4
-          },
-          { quoted: msg }
-        );
-      } else {
-        return await bot.sendMessage(
-          chatId,
-          {
-            text:
-              captionText +
-              "\n\n⚠️ ইউজার কোনো প্রোফাইল পিকচার সেট করেনি!"
-          },
-          { quoted: msg }
-        );
-      }
+        { quoted: message }
+      );
 
     } catch (error) {
       console.error("PP Command Error:", error);
-
-      return bot.sendMessage(
-        chatId,
-        {
-          text: "❌ প্রোফাইল পিকচার আনতে কোনো সমস্যা হয়েছে!"
-        },
-        { quoted: msg }
+      return reply(
+        "❌ প্রোফাইল পিকচার আনতে কোনো সমস্যা হয়েছে!"
       );
     }
   }
