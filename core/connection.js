@@ -15,120 +15,93 @@ const makeWASocket =
 
 const {
   useMultiFileAuthState,
-  fetchLatestWaWebVersion,
-  Browsers
+  fetchLatestBaileysVersion
 } = baileys;
 
 if (typeof makeWASocket !== "function") {
   throw new Error("Baileys makeWASocket export unavailable");
 }
 
-async function getWhatsAppVersion() {
-  try {
-    const live = await fetchLatestWaWebVersion({
-      timeout: 15000
-    });
-
-    if (
-      Array.isArray(live?.version) &&
-      live.version.length === 3
-    ) {
-      logger.success(
-        `Using WhatsApp Web version: ${live.version.join(".")}`
-      );
-
-      if (!live.isLatest) {
-        logger.warn(
-          "WhatsApp Web version isLatest=false; using returned live version."
-        );
-      }
-
-      return live.version;
-    }
-  } catch (error) {
-    logger.warn(
-      `Live WhatsApp version fetch failed: ${error.message}`
-    );
-  }
-
-  throw new Error(
-    "Unable to obtain a valid live WhatsApp Web version. Refusing stale fallback."
-  );
-}
-
 export async function connectToWhatsApp() {
   await fs.ensureDir(CONFIG.SESSION_DIR);
-
-  const version = await getWhatsAppVersion();
 
   const { state, saveCreds } =
     await useMultiFileAuthState(CONFIG.SESSION_DIR);
 
+  let version;
+
+  try {
+    const result = await fetchLatestBaileysVersion();
+
+    if (
+      Array.isArray(result?.version) &&
+      result.version.length === 3
+    ) {
+      version = result.version;
+
+      logger.success(
+        `Using Baileys WhatsApp version: ${version.join(".")}`
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      `Could not fetch WhatsApp version: ${error.message}`
+    );
+  }
+
   const sock = makeWASocket({
-    version,
+    ...(version ? { version } : {}),
+
     auth: state,
 
     logger: pino({
       level: "silent"
     }),
 
-    browser: Browsers.macOS("Chrome"),
+    printQRInTerminal: false,
+
+    browser: [
+      CONFIG.BOT_NAME,
+      "Chrome",
+      CONFIG.VERSION
+    ],
 
     markOnlineOnConnect: false,
-    syncFullHistory: false,
-
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000
+    syncFullHistory: false
   });
 
   sock.ev.on("creds.update", saveCreds);
 
-  let pairingStarted = false;
+  if (!state.creds.registered && CONFIG.BOT_PHONE_NUMBER) {
+    logger.info(
+      `Pairing code will be generated in 30 seconds for: ${CONFIG.BOT_PHONE_NUMBER}`
+    );
 
-  sock.ev.on("connection.update", async (update) => {
-    const { qr, connection } = update;
-
-    if (connection === "open") {
-      pairingStarted = true;
-      return;
-    }
-
-    if (
-      !qr ||
-      state.creds.registered ||
-      !CONFIG.PAIRING?.ENABLED ||
-      pairingStarted
-    ) {
-      return;
-    }
-
-    if (!CONFIG.BOT_PHONE_NUMBER) {
-      logger.error("Bot phone number is missing.");
-      return;
-    }
-
-    pairingStarted = true;
-
-    try {
-      logger.info("Requesting WhatsApp pairing code...");
-
-      const code = await requestPairing(sock);
-
-      if (!code) {
-        pairingStarted = false;
-        logger.error("Pairing code generation failed.");
+    setTimeout(async () => {
+      if (state.creds.registered) {
+        logger.info("WhatsApp account is already registered.");
         return;
       }
 
-      logger.success("PAIRING CODE GENERATED");
-      logger.info(code);
+      try {
+        logger.info("Requesting WhatsApp pairing code...");
 
-    } catch (error) {
-      pairingStarted = false;
+        const code = await requestPairing(sock);
 
-      logger.error("Pairing request failed.", error);
-    }
-  });
+        if (code) {
+          logger.success("PAIRING CODE GENERATED");
+          logger.info(code);
+        } else {
+          logger.error("Pairing code generation failed.");
+        }
+      } catch (error) {
+        logger.error("Pairing request failed:", error);
+      }
+    }, 30000);
+
+  } else if (!state.creds.registered) {
+    logger.error("BOT_PHONE_NUMBER is missing.");
+  }
 
   return sock;
 }
