@@ -78,14 +78,12 @@ export async function connectToWhatsApp() {
     keepAliveIntervalMs: 25000
   });
 
+  // Save credentials whenever WhatsApp updates them.
   sock.ev.on("creds.update", saveCreds);
 
-  // Existing registered session: do not request another code.
+  // Existing valid session does not need a new pairing code.
   if (state.creds.registered) {
     logger.success("Existing WhatsApp session detected.");
-    logger.info(
-      "Pairing code is not required for this registered session."
-    );
 
     return sock;
   }
@@ -95,72 +93,73 @@ export async function connectToWhatsApp() {
   ).replace(/\D/g, "");
 
   if (!phoneNumber) {
-    logger.error(
-      "BOT_PHONE_NUMBER is missing in config.js"
-    );
-
+    logger.error("BOT_PHONE_NUMBER is missing.");
     return sock;
   }
 
-  let pairingTimer = null;
   let pairingStarted = false;
 
-  const clearPairingTimer = () => {
-    if (pairingTimer) {
-      clearTimeout(pairingTimer);
-      pairingTimer = null;
-    }
-  };
+  // Request a pairing code only when Baileys signals readiness.
+  sock.ev.on("connection.update", async update => {
+    const { connection, qr, lastDisconnect } = update;
 
-  const startPairing = async () => {
-    if (pairingStarted || state.creds.registered) {
-      return;
-    }
-
-    pairingStarted = true;
-    clearPairingTimer();
-
-    try {
-      logger.info("Requesting WhatsApp pairing code...");
-
-      const code = await requestPairing(sock);
-
-      if (!code) {
-        logger.error(
-          "Pairing code was not generated. Check the connection and phone number."
-        );
-        return;
-      }
-
-      logger.success("PAIRING CODE GENERATED");
-      logger.info(`CODE: ${code}`);
-
-    } catch (error) {
-      logger.error(
-        "Pairing code request failed:",
-        error
-      );
-    }
-  };
-
-  // Wait briefly for the socket to initialize.
-  logger.info(
-    "Waiting before requesting WhatsApp pairing code..."
-  );
-
-  pairingTimer = setTimeout(() => {
-    startPairing();
-  }, 8000);
-
-  // Stop the pending request if the connection opens or closes.
-  sock.ev.on("connection.update", update => {
     if (
-      update.connection === "open" ||
-      update.connection === "close"
+      !state.creds.registered &&
+      !pairingStarted &&
+      (connection === "connecting" || Boolean(qr))
     ) {
-      clearPairingTimer();
+      pairingStarted = true;
+
+      try {
+        logger.info(
+          `Requesting pairing code for ${phoneNumber}`
+        );
+
+        const code = await requestPairing(sock);
+
+        if (!code) {
+          logger.error(
+            "Pairing code generation failed."
+          );
+          return;
+        }
+
+        logger.success("PAIRING CODE GENERATED");
+        logger.info(`CODE: ${code}`);
+
+      } catch (error) {
+        logger.error(
+          "Pairing code request failed:",
+          error
+        );
+      }
+    }
+
+    if (connection === "open") {
+      logger.success("WhatsApp connection opened.");
+    }
+
+    if (connection === "close") {
+      const statusCode =
+        lastDisconnect?.error?.output?.statusCode;
+
+      logger.warn(
+        `WhatsApp connection closed. Status: ${
+          statusCode ?? "unknown"
+        }`
+      );
+
+      if (statusCode === 401) {
+        logger.error(
+          "WhatsApp authentication rejected. A fresh login is required."
+        );
+      }
     }
   });
+
+  logger.info(
+    "Waiting for WhatsApp connection readiness..."
+  );
 
   return sock;
 }
