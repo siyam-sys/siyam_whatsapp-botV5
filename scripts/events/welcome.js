@@ -1,12 +1,14 @@
-// AUTHOR: RJ siyam
-// WhatsApp Welcome Card - text is rendered after all images for reliable visibility.
+
+// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
+// Advanced Welcome System for RJ-siyam WhatsApp Bot V5
 
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { AUTHOR, CONFIG } from "../../config.js";
 import { getGroup } from "../../database/groups.js";
 
 const SPECIAL_GROUP_JID = process.env.SPECIAL_WELCOME_GROUP || "";
-const BACKGROUNDS = [
+
+const BACKGROUND_IMAGES = [
   "https://i.imgur.com/XVRFwns.jpeg",
   "https://i.imgur.com/DXXvgjb.png",
   "https://i.imgur.com/LwoDuzZ.jpeg",
@@ -14,10 +16,13 @@ const BACKGROUNDS = [
   "https://i.imgur.com/IVvEBc4.jpeg",
   "https://i.imgur.com/uJcd1bf.jpeg"
 ];
+
 const BOT_JOIN_IMAGES = [
   "https://i.imgur.com/y5a5BBP.jpeg",
   "https://i.imgur.com/586Aq55.jpeg"
 ];
+
+const BACKGROUND_CACHE = new Map();
 
 const SPECIAL_RULES = `📢 স্বাগতম @USER
 
@@ -28,284 +33,578 @@ const SPECIAL_RULES = `📢 স্বাগতম @USER
 ⚠️ গ্রুপে থাকলে নিচের নিয়মগুলো অবশ্যই মেনে চলতে হবে।
 
 1️⃣ শুধুমাত্র ভিডিও দেওয়া যাবে।
+
 2️⃣ ১৮+ বা অশ্লীল কোনো ভিডিও/কনটেন্ট সম্পূর্ণ নিষিদ্ধ।
+
 3️⃣ অপ্রয়োজনীয় মেনশন (@) অথবা স্পিকার সম্পূর্ণ নিষিদ্ধ।
+
 4️⃣ ইনবক্সে বিরক্ত করা বা গ্রুপ থেকে ইনবক্সে ডাকা যাবে না।
+
 5️⃣ গালাগালি, ঝগড়া, অপমানজনক ভাষা ও ধর্মীয়/রাজনৈতিক বিতর্ক নিষিদ্ধ।
+
 6️⃣ স্প্যাম, ফ্লাড বা একই পোস্ট বারবার দেওয়া যাবে না।
+
 7️⃣ অন্য গ্রুপ বা পেজের অযথা প্রচার নিষিদ্ধ।
+
 8️⃣ একটি ভিডিওতে কমপক্ষে ৫টি রিয়্যাক্ট না হওয়া পর্যন্ত দ্বিতীয় ভিডিও দেওয়া নিষিদ্ধ।
+
 9️⃣ অ্যাডমিন বা মডারেটরের সিদ্ধান্ত সবাইকে সম্মান করতে হবে।
+
 🔟 কোনো সমস্যা হলে সরাসরি অ্যাডমিনের সাথে যোগাযোগ করুন।
+
 1️⃣1️⃣ নিয়ম ভঙ্গ করলে কিক বা রিমুভ করা হতে পারে।
 
 ━━━━━━━━━━━━━━━━━━
-OWNER ➜ RJ siyam`;
 
-const cache = new Map();
+𝗢𝗪𝗡𝗘𝗥 ➜ 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦`;
 
-function pick(list) {
-  return list[Math.floor(Math.random() * list.length)];
+// ===============================
+// BASIC HELPERS
+// ===============================
+
+function normalizeJid(jid = "") {
+  return String(jid)
+    .split(":")[0]
+    .trim()
+    .toLowerCase();
 }
-function jidNumber(jid = "") {
+
+function isBotJid(jid, botJid) {
+  if (!jid || !botJid) return false;
+
+  const a = normalizeJid(jid);
+  const b = normalizeJid(botJid);
+
+  return a === b;
+}
+
+function randomItem(array) {
+  return array[Math.floor(Math.random() * array.length)];
+}
+
+function getNumber(jid = "") {
   return String(jid).split("@")[0].split(":")[0];
 }
-function normalizeJid(jid = "") {
-  return String(jid).split(":")[0].trim().toLowerCase();
-}
-function sameJid(a, b) {
-  return Boolean(a && b && normalizeJid(a) === normalizeJid(b));
-}
-function safeText(value, fallback = "Unknown") {
-  const text = String(value ?? "").trim();
-  return text || fallback;
-}
-function shorten(value, max = 34) {
-  const text = safeText(value);
-  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+
+function shorten(text = "", max = 35) {
+  const value = String(text || "Unknown");
+
+  return value.length > max
+    ? value.slice(0, max - 3) + "..."
+    : value;
 }
 
-async function getImage(url) {
+async function downloadImage(url) {
   if (!url) return null;
+
   try {
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(12000),
-      headers: { "User-Agent": "Mozilla/5.0" }
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = Buffer.from(await response.arrayBuffer());
-    if (!data.length || data.length > 10 * 1024 * 1024) return null;
-    return await loadImage(data);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    if (!buffer.length || buffer.length > 10 * 1024 * 1024) {
+      throw new Error("Invalid image size");
+    }
+
+    return await loadImage(buffer);
+
   } catch (error) {
-    console.error("[WELCOME] Image load:", error.message);
+    console.error("[WELCOME] Image download error:", error.message);
     return null;
   }
 }
 
-async function getCachedBackground(url) {
-  if (!cache.has(url)) cache.set(url, getImage(url));
-  return cache.get(url);
+async function getBackground(url) {
+  if (!BACKGROUND_CACHE.has(url)) {
+    const promise = downloadImage(url);
+    BACKGROUND_CACHE.set(url, promise);
+  }
+
+  const image = await BACKGROUND_CACHE.get(url);
+
+  return image;
 }
 
-async function getProfile(sock, jid) {
-  if (!jid) return null;
+async function getProfileImage(sock, jid) {
   try {
+    if (!jid) return null;
+
     const url = await sock.profilePictureUrl(jid, "image");
-    return await getImage(url);
+
+    return await downloadImage(url);
+
   } catch {
     return null;
   }
 }
 
-function drawCover(ctx, image, width, height) {
-  if (!image) {
-    const gradient = ctx.createLinearGradient(0, 0, width, height);
-    gradient.addColorStop(0, "#101827");
-    gradient.addColorStop(1, "#312e81");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, width, height);
-    return;
-  }
-  const scale = Math.max(width / image.width, height / image.height);
-  const sw = width / scale;
-  const sh = height / scale;
-  ctx.drawImage(image, (image.width - sw) / 2, (image.height - sh) / 2, sw, sh, 0, 0, width, height);
-}
+function drawCircleImage(ctx, image, x, y, size, borderColor, fallback = "U") {
+  const radius = size / 2;
 
-function drawAvatar(ctx, image, x, y, size, color, fallback) {
   ctx.save();
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 20;
+
+  // Shadow
+  ctx.shadowColor = borderColor;
+  ctx.shadowBlur = 18;
+
   ctx.beginPath();
-  ctx.arc(x, y, size / 2 + 5, 0, Math.PI * 2);
-  ctx.fillStyle = color;
+  ctx.arc(x, y, radius + 5, 0, Math.PI * 2);
+  ctx.fillStyle = borderColor;
   ctx.fill();
+
   ctx.shadowBlur = 0;
+
+  // Border
   ctx.beginPath();
-  ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+  ctx.arc(x, y, radius + 2, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+
+  // Clip
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.clip();
+
   if (image) {
-    ctx.drawImage(image, x - size / 2, y - size / 2, size, size);
+    ctx.drawImage(
+      image,
+      x - radius,
+      y - radius,
+      size,
+      size
+    );
   } else {
-    ctx.fillStyle = "#1f2937";
-    ctx.fillRect(x - size / 2, y - size / 2, size, size);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `bold ${Math.floor(size * 0.42)}px Arial`;
+    ctx.fillStyle = "#374151";
+    ctx.fillRect(
+      x - radius,
+      y - radius,
+      size,
+      size
+    );
+
+    ctx.fillStyle = borderColor;
+    ctx.font = `bold ${radius}px Arial`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(fallback, x, y);
   }
+
   ctx.restore();
 }
 
-function drawLabel(ctx, text, x, y, size, color = "#ffffff", align = "center") {
+function drawText(ctx, text, x, y, maxWidth, font, color) {
   ctx.save();
-  ctx.font = `bold ${size}px Arial, sans-serif`;
+
+  ctx.font = font;
   ctx.fillStyle = color;
-  ctx.textAlign = align;
+  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.shadowColor = "rgba(0,0,0,0.9)";
-  ctx.shadowBlur = 7;
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "rgba(0,0,0,0.45)";
-  ctx.strokeText(String(text), x, y, 1050);
-  ctx.fillText(String(text), x, y, 1050);
+
+  ctx.fillText(
+    shorten(text, 45),
+    x,
+    y,
+    maxWidth
+  );
+
   ctx.restore();
 }
 
-async function createWelcomeCard({ sock, groupJid, participant, adderJid, groupName, userName, adderName, memberCount }) {
+// ===============================
+// WELCOME CARD GENERATOR
+// ===============================
+
+async function createWelcomeCard({
+  groupImage,
+  userImage,
+  adderImage,
+  userName,
+  memberCount,
+  groupName,
+  adderName
+}) {
   const width = 1200;
   const height = 700;
+
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext("2d");
 
-  const [background, groupImage, userImage, adderImage] = await Promise.all([
-    getCachedBackground(pick(BACKGROUNDS)),
-    getProfile(sock, groupJid),
-    getProfile(sock, participant),
-    getProfile(sock, adderJid)
-  ]);
+  // Background
+  const background = await getBackground(randomItem(BACKGROUND_IMAGES));
 
-  drawCover(ctx, background, width, height);
-  ctx.fillStyle = "rgba(0,0,0,0.56)";
+  if (background) {
+    ctx.drawImage(background, 0, 0, width, height);
+  } else {
+    const gradient = ctx.createLinearGradient(0, 0, width, height);
+
+    gradient.addColorStop(0, "#111827");
+    gradient.addColorStop(1, "#312e81");
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  // Dark overlay
+  ctx.fillStyle = "rgba(0,0,0,0.48)";
   ctx.fillRect(0, 0, width, height);
 
-  // All text is drawn AFTER background and profile images.
-  ctx.strokeStyle = "rgba(255,255,255,0.75)";
+  // Decorative border
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
   ctx.lineWidth = 4;
-  ctx.strokeRect(16, 16, width - 32, height - 32);
+  ctx.strokeRect(15, 15, width - 30, height - 30);
 
-  drawAvatar(ctx, groupImage, width / 2, 125, 150, "#ffffff", "G");
-  drawAvatar(ctx, userImage, 115, 575, 132, "#10b981", "U");
-  drawAvatar(ctx, adderImage, 1085, 115, 120, "#3b82f6", "A");
+  // Profile images
+  drawCircleImage(
+    ctx,
+    groupImage,
+    width / 2,
+    150,
+    175,
+    "#ffffff",
+    "G"
+  );
 
-  drawLabel(ctx, shorten(groupName, 42), width / 2, 235, 32);
-  drawLabel(ctx, "WELCOME", width / 2, 345, 82, "#38e8ad");
+  drawCircleImage(
+    ctx,
+    userImage,
+    125,
+    height - 115,
+    145,
+    "#10b981",
+    "U"
+  );
 
-  ctx.save();
+  drawCircleImage(
+    ctx,
+    adderImage,
+    width - 125,
+    110,
+    145,
+    "#3b82f6",
+    "A"
+  );
+
+  // Group name
+  drawText(
+    ctx,
+    groupName,
+    width / 2,
+    270,
+    850,
+    'bold 34px Arial',
+    "#ffffff"
+  );
+
+  // WELCOME gradient
+  const welcomeGradient = ctx.createLinearGradient(
+    350, 350, 850, 350
+  );
+
+  welcomeGradient.addColorStop(0, "#3b82f6");
+  welcomeGradient.addColorStop(0.5, "#10b981");
+  welcomeGradient.addColorStop(1, "#ec4899");
+
+  ctx.font = 'bold 82px Arial';
+  ctx.fillStyle = welcomeGradient;
+  ctx.textAlign = "center";
+
+  ctx.fillText("WELCOME", width / 2, 400);
+
+  // Divider
   ctx.strokeStyle = "#10b981";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(380, 395);
-  ctx.lineTo(820, 395);
-  ctx.stroke();
-  ctx.restore();
+  ctx.lineWidth = 3;
 
-  drawLabel(ctx, shorten(userName, 34), width / 2, 465, 42);
-  drawLabel(ctx, `MEMBER #${memberCount}`, width / 2, 525, 28, "#e2e8f0");
-  drawLabel(ctx, `Added by: ${shorten(adderName, 24)}`, width - 35, 205, 22, "#93c5fd", "right");
-  drawLabel(ctx, shorten(userName, 22), 205, 635, 20, "#6ee7b7", "left");
-  drawLabel(ctx, "RJ-siyam WhatsApp Bot V5", width - 35, 665, 16, "#ffffff", "right");
+  ctx.beginPath();
+  ctx.moveTo(400, 425);
+  ctx.lineTo(800, 425);
+  ctx.stroke();
+
+  // User name
+  drawText(
+    ctx,
+    userName,
+    width / 2,
+    485,
+    800,
+    'bold 45px Arial',
+    "#ffffff"
+  );
+
+  // Member count
+  drawText(
+    ctx,
+    `MEMBER #${memberCount}`,
+    width / 2,
+    545,
+    700,
+    'bold 30px Arial',
+    "#e2e8f0"
+  );
+
+  // Added by
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#60a5fa";
+  ctx.font = 'bold 22px Arial';
+
+  ctx.fillText(
+    `Added by: ${shorten(adderName, 22)}`,
+    width - 35,
+    210
+  );
+
+  // Bottom user label
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#34d399";
+  ctx.font = 'bold 23px Arial';
+
+  ctx.fillText(
+    shorten(userName, 20),
+    215,
+    height - 95
+  );
+
+  // Footer
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(255,255,255,0.65)";
+  ctx.font = "16px Arial";
+
+  ctx.fillText(
+    "© RJ-siyam WhatsApp Bot V5",
+    width - 30,
+    height - 25
+  );
 
   return canvas.toBuffer("image/png");
 }
 
+// ===============================
+// BOT JOIN NOTIFICATION
+// ===============================
+
 async function sendBotJoinNotice(sock, groupJid, groupName, memberCount) {
   const prefix = CONFIG.PREFIX || "/";
+
   const caption =
-    `✨ 𝗕𝗢𝗧 𝗖𝗢𝗡𝗡𝗘𝗖𝗧𝗘𝗗 ✨\n━━━━━━━━━━━━━━━━━━\n` +
-    `👋 হ্যালো সবাই!\n\n🤖 আমি ${CONFIG.BOT_NAME || "WhatsApp Bot"}\n` +
-    `❤️ আমাকে গ্রুপে Add করার জন্য ধন্যবাদ।\n\n━━━━━━━━━━━━━━━━━━\n` +
-    `📌 𝗚𝗥𝗢𝗨𝗣 𝗜𝗡𝗙𝗢\n» 👥 MEMBERS: ${memberCount}\n` +
-    `» 🏷️ GROUP: ${groupName}\n» 🤖 PREFIX: ${prefix}\n\n` +
-    `━━━━━━━━━━━━━━━━━━\n📖 𝗚𝗘𝗧 𝗦𝗧𝗔𝗥𝗧𝗘𝗗\n` +
-    `» ${prefix}help — সকল কমান্ড দেখুন\n» ${prefix}bot — বটের তথ্য দেখুন\n\n` +
-    `👑 𝗢𝗪𝗡𝗘𝗥 : RJ siyam\n🌸 সবাইকে স্বাগতম!`;
+    `✨ 𝗕𝗢𝗧 𝗖𝗢𝗡𝗡𝗘𝗖𝗧𝗘𝗗 ✨\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `👋 হ্যালো সবাই!\n\n` +
+    `🤖 আমি ${CONFIG.BOT_NAME}\n` +
+    `❤️ আমাকে গ্রুপে Add করার জন্য ধন্যবাদ।\n\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `📌 𝗚𝗥𝗢𝗨𝗣 𝗜𝗡𝗙𝗢\n` +
+    `» 👥 MEMBERS: ${memberCount}\n` +
+    `» 🏷️ GROUP: ${groupName}\n` +
+    `» 🤖 PREFIX: ${prefix}\n\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `📖 𝗚𝗘𝗧 𝗦𝗧𝗔𝗥𝗧𝗘𝗗\n` +
+    `» ${prefix}help — সকল কমান্ড দেখুন\n` +
+    `» ${prefix}bot — বটের তথ্য দেখুন\n\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `👑 𝗢𝗪𝗡𝗘𝗥 : 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦\n\n` +
+    `🌸 সবাইকে স্বাগতম!`;
 
   try {
-    await sock.sendMessage(groupJid, { image: { url: pick(BOT_JOIN_IMAGES) }, caption });
+    await sock.sendMessage(groupJid, {
+      image: {
+        url: randomItem(BOT_JOIN_IMAGES)
+      },
+      caption
+    });
+
   } catch (error) {
     console.error("[WELCOME] Bot join image failed:", error.message);
-    await sock.sendMessage(groupJid, { text: caption });
+
+    await sock.sendMessage(groupJid, {
+      text: caption
+    });
   }
 }
 
-async function sendMemberWelcome({ sock, groupJid, participant, groupName, memberCount, adderJid }) {
-  let userName = jidNumber(participant) || "New Member";
-  let adderName = adderJid ? jidNumber(adderJid) : "Unknown";
+// ===============================
+// NORMAL MEMBER WELCOME
+// ===============================
+
+async function sendMemberWelcome({
+  sock,
+  groupJid,
+  participant,
+  groupName,
+  memberCount,
+  adderJid
+}) {
+  const userNumber = getNumber(participant);
+
+  let userName = userNumber || "New Member";
+  let adderName = "Unknown";
+
   try {
     userName = await sock.getName?.(participant) || userName;
   } catch {}
+
   if (adderJid) {
     try {
-      adderName = await sock.getName?.(adderJid) || adderName;
-    } catch {}
+      adderName = await sock.getName?.(adderJid) || getNumber(adderJid);
+    } catch {
+      adderName = getNumber(adderJid);
+    }
   }
 
-  const imageBuffer = await createWelcomeCard({
-    sock, groupJid, participant, adderJid, groupName, userName, adderName, memberCount
-  });
-  const number = jidNumber(participant);
-  const caption =
-    `🌸 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🌸\n━━━━━━━━━━━━━━━━━━\n` +
-    `🌷 𝐍𝐚𝐦𝐞: @${number}\n🏷️ 𝐆𝐫𝐨𝐮𝐩: ${groupName}\n` +
-    `🔢 𝐌𝐞𝐦𝐛𝐞𝐫 #${memberCount}\n👤 𝐀𝐝𝐝𝐞𝐝 𝐛𝐲: ${adderName}\n` +
-    `━━━━━━━━━━━━━━━━━━\n𝐄𝐧𝐣𝐨𝐲 𝐲𝐨𝐮𝐫 𝐬𝐭𝐚𝐲! 😊`;
+  const [groupImage, userImage, adderImage] = await Promise.all([
+    getProfileImage(sock, groupJid),
+    getProfileImage(sock, participant),
+    getProfileImage(sock, adderJid)
+  ]);
 
-  await sock.sendMessage(groupJid, {
-    image: imageBuffer,
-    mimetype: "image/png",
-    caption,
-    mentions: [participant]
-  });
+  let imageBuffer = null;
+
+  try {
+    imageBuffer = await createWelcomeCard({
+      groupImage,
+      userImage,
+      adderImage,
+      userName,
+      memberCount,
+      groupName,
+      adderName
+    });
+  } catch (error) {
+    console.error("[WELCOME] Card generation failed:", error.message);
+  }
+
+  const caption =
+    `🌸 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🌸\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `🌷 𝐍𝐚𝐦𝐞: @${userNumber}\n` +
+    `🏷️ 𝐆𝐫𝐨𝐮𝐩: ${groupName}\n` +
+    `🔢 𝐌𝐞𝐦𝐛𝐞𝐫 #${memberCount}\n` +
+    `👤 𝐀𝐝𝐝𝐞𝐝 𝐛𝐲: ${adderName}\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `𝐄𝐧𝐣𝐨𝐲 𝐲𝐨𝐮𝐫 𝐬𝐭𝐚𝐲! 😊`;
+
+  if (imageBuffer) {
+    await sock.sendMessage(groupJid, {
+      image: imageBuffer,
+      caption,
+      mentions: [participant]
+    });
+  } else {
+    await sock.sendMessage(groupJid, {
+      text: caption,
+      mentions: [participant]
+    });
+  }
 }
+
+// ===============================
+// EVENT MODULE
+// ===============================
 
 export default {
   config: {
     name: "welcome",
     event: "group-participants.update",
-    version: "4.0.0",
+    version: "3.0.0",
     author: AUTHOR,
-    description: "WhatsApp welcome card and bot join notification"
+    description: "Advanced Welcome Card and Bot Join Notification"
   },
 
   onStart: async ({ sock, data }) => {
     if (!data || data.action !== "add" || !data.id) return;
+
     const groupJid = data.id;
+
     if (!groupJid.endsWith("@g.us")) return;
 
     try {
       let groupName = "WhatsApp Group";
       let memberCount = 0;
+
+      // Group metadata
       try {
         const metadata = await sock.groupMetadata(groupJid);
+
         groupName = metadata.subject || groupName;
         memberCount = metadata.participants?.length || 0;
+
       } catch (error) {
         console.error("[WELCOME] Metadata error:", error.message);
       }
 
       const botJid = sock.user?.id || "";
-      const participants = data.participants || [];
-      const botAdded = participants.some(participant => sameJid(participant, botJid));
 
-      if (botAdded) await sendBotJoinNotice(sock, groupJid, groupName, memberCount);
+      // Check if bot itself was added
+      const botAdded = (data.participants || []).some(
+        participant => isBotJid(participant, botJid)
+      );
 
+      // Bot join notice works independently of normal welcome setting
+      if (botAdded) {
+        await sendBotJoinNotice(
+          sock,
+          groupJid,
+          groupName,
+          memberCount
+        );
+      }
+
+      // Check group welcome settings
       const groupSettings = await getGroup(groupJid);
+
       if (groupSettings?.welcome === false) return;
 
+      // Special group rules
       if (SPECIAL_GROUP_JID && groupJid === SPECIAL_GROUP_JID) {
-        for (const participant of participants) {
-          if (sameJid(participant, botJid)) continue;
+        for (const participant of data.participants || []) {
+          if (isBotJid(participant, botJid)) continue;
+
+          const userNumber = getNumber(participant);
+
           await sock.sendMessage(groupJid, {
-            text: SPECIAL_RULES.replace("USER", jidNumber(participant)),
+            text: SPECIAL_RULES.replace("USER", userNumber),
             mentions: [participant]
           });
         }
+
         return;
       }
 
-      for (const participant of participants) {
-        if (sameJid(participant, botJid)) continue;
+      // Welcome all newly added members
+      for (const participant of data.participants || []) {
+        if (isBotJid(participant, botJid)) continue;
+
         try {
           await sendMemberWelcome({
-            sock, groupJid, participant, groupName, memberCount, adderJid: data.author || ""
+            sock,
+            groupJid,
+            participant,
+            groupName,
+            memberCount,
+            adderJid: data.author || ""
           });
+
         } catch (error) {
-          console.error(`[WELCOME] Failed for ${participant}:`, error.message);
+          console.error(
+            `[WELCOME] Failed for ${participant}:`,
+            error.message
+          );
+
+          // Final fallback
           try {
             await sock.sendMessage(groupJid, {
-              text: `🌸 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🌸\n\nস্বাগতম @${jidNumber(participant)}!\n🏷️ Group: ${groupName}\n🌟 আমাদের গ্রুপে আপনাকে স্বাগতম।`,
+              text:
+                `🌸 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🌸\n\n` +
+                `স্বাগতম @${getNumber(participant)}!\n` +
+                `🏷️ Group: ${groupName}\n` +
+                `🌟 আমাদের গ্রুপে আপনাকে স্বাগতম।`,
               mentions: [participant]
             });
           } catch (sendError) {
@@ -313,6 +612,7 @@ export default {
           }
         }
       }
+
     } catch (error) {
       console.error("[WELCOME EVENT ERROR]:", error);
     }
