@@ -1,35 +1,49 @@
+// AUTHOR: 𝐑𝐉 𝐬𝐢𝐲𝐚𝐦
+// Original Messenger Command adapted for Baileys WhatsApp.
+// AUTHOR LOCKED FILE.
 
 import axios from "axios";
+import { AUTHOR } from "../../config.js";
 
-const EXPECTED_AUTHOR = "𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍";
+const EXPECTED_AUTHOR = "𝐑𝐉 𝐬𝐢𝐲𝐚𝐦";
 
 export default {
   config: {
     name: "anime",
+    aliases: ["sad", "animevideo"],
     version: "2.0.0",
-    author: EXPECTED_AUTHOR,
+    author: AUTHOR,
     countDown: 5,
     role: 0,
     shortDescription: "Sad video sender 😢",
     longDescription: "Sends random sad video with emotional captions 💔",
     category: "media",
-    guide: {
-      en: "{pn}"
-    }
+    usage: ".anime"
   },
 
-  onStart: async function ({ sock, jid, message, reply }) {
+  onStart: async function ({ sock, jid, reply }) {
 
-    if (this.config.author !== EXPECTED_AUTHOR) {
-      throw new Error("❌ AUTHOR LOCKED FILE - Modification Detected!");
+    // AUTHOR LOCK SYSTEM
+    if (AUTHOR !== EXPECTED_AUTHOR) {
+      throw new Error(
+        "❌ AUTHOR LOCKED FILE - Modification Detected!"
+      );
     }
 
+    // ORIGINAL CAPTION DESIGN
     const captions = [
-      "=「𝐏𝐑𝐄𝐅𝐈𝐗-𝐄𝐕𝐄𝐍𝐓」= \n--❖(✷‿𝐍𝐈𝐉𝐇𝐔𝐌-𝐁𝐎𝐓‿✷)❖-- \n✢━━━━━━━━━━━━━━━✢        \n🎌🏴‍☠️♡-𝐀𝐍𝐈𝐌𝐄-𝐕𝐈𝐃𝐄𝐎-♡🏴‍☠️🎌 \n✢━━━━━━━━━━━━━━━✢\n(✷‿𝐎𝐖𝐍𝐄𝐑:-‿𝐃𝐒-𝆠፝𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍✷)"
+      `=「𝐏𝐑𝐄𝐅𝐈𝐗-𝐄𝐕𝐄𝐍𝐓」=
+--❖(✷‿𝐍𝐈𝐉𝐇𝐔𝐌-𝐁𝐎𝐓‿✷)❖--
+✢━━━━━━━━━━━━━━━✢
+🎌🏴‍☠️♡-𝐀𝐍𝐈𝐌𝐄-𝐕𝐈𝐃𝐄𝐎-♡🏴‍☠️🎌
+✢━━━━━━━━━━━━━━━✢
+(✷‿𝐎𝐖𝐍𝐄𝐑:-‿𝐃𝐒-𝆠፝𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍✷)`
     ];
 
-    const caption = captions[Math.floor(Math.random() * captions.length)];
+    const caption =
+      captions[Math.floor(Math.random() * captions.length)];
 
+    // ORIGINAL GOOGLE DRIVE VIDEO LINKS
     const links = [
       "https://drive.google.com/uc?id=18-qJqj0yJOe1DnqtKCtt2BA6aL4Lsu1V",
       "https://drive.google.com/uc?id=18_dfqfqJ7Izv_V39udjqHIhL9VNXJ9g8",
@@ -76,33 +90,64 @@ export default {
       "https://drive.google.com/uc?id=1777G3gps_igQxFXVmJYFXs_DzCNB672s"
     ];
 
-    const link = links[Math.floor(Math.random() * links.length)];
+    // RANDOM VIDEO SELECTION
+    const link = links[
+      Math.floor(Math.random() * links.length)
+    ];
 
     try {
+      // DOWNLOAD VIDEO
       const response = await axios({
-        url: encodeURI(link),
+        url: link,
         method: "GET",
         responseType: "arraybuffer",
         timeout: 60000,
-        maxContentLength: 50 * 1024 * 1024,
-        maxBodyLength: 50 * 1024 * 1024
+        maxRedirects: 10,
+        maxContentLength: 100 * 1024 * 1024,
+        headers: {
+          "User-Agent": "Mozilla/5.0"
+        }
       });
 
       const videoBuffer = Buffer.from(response.data);
 
+      if (!videoBuffer.length) {
+        throw new Error("Downloaded video is empty.");
+      }
+
+      // GOOGLE DRIVE HTML RESPONSE CHECK
+      const firstBytes = videoBuffer
+        .subarray(0, 100)
+        .toString("utf8")
+        .trimStart()
+        .toLowerCase();
+
+      if (
+        firstBytes.startsWith("<!doctype html") ||
+        firstBytes.startsWith("<html")
+      ) {
+        throw new Error(
+          "Google Drive returned HTML instead of video."
+        );
+      }
+
+      // SEND VIDEO THROUGH WHATSAPP BAILEYS
       await sock.sendMessage(
         jid,
         {
           video: videoBuffer,
           mimetype: "video/mp4",
           caption: `「 ${caption} 」`
-        },
-        { quoted: message }
+        }
       );
 
     } catch (error) {
-      console.error("[ANIME ERROR]", error);
-      return reply("❌ কিছু একটা সমস্যা হয়েছে ভিডিও আনতে।");
+      console.error("[ANIME COMMAND ERROR]", error);
+
+      await reply(
+        "❌ ভিডিও পাঠাতে সমস্যা হয়েছে!\n\n" +
+        "সম্ভবত ভিডিও লিংক কাজ করছে না অথবা ভিডিও ডাউনলোড করা যাচ্ছে না।"
+      );
     }
   }
 };
