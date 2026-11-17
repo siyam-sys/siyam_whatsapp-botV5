@@ -68,58 +68,48 @@ export async function connectToWhatsApp() {
       : ["Ubuntu", "Chrome", "20.0.0"],
 
     markOnlineOnConnect: false,
-
     syncFullHistory: false,
 
     connectTimeoutMs: 60000,
-
     defaultQueryTimeoutMs: 60000,
-
     keepAliveIntervalMs: 25000
   });
 
-  // Save credentials whenever WhatsApp updates them.
+  // Save authentication updates.
   sock.ev.on("creds.update", saveCreds);
 
-  // Existing valid session does not need a new pairing code.
+  // If credentials are already registered, do not request another code.
   if (state.creds.registered) {
-    logger.success("Existing WhatsApp session detected.");
+    logger.warn(
+      "Existing registered session found. Checking WhatsApp authentication."
+    );
 
-    return sock;
-  }
-
-  const phoneNumber = String(
-    CONFIG.BOT_PHONE_NUMBER || ""
-  ).replace(/\D/g, "");
-
-  if (!phoneNumber) {
-    logger.error("BOT_PHONE_NUMBER is missing.");
     return sock;
   }
 
   let pairingStarted = false;
 
-  // Request a pairing code only when Baileys signals readiness.
   sock.ev.on("connection.update", async update => {
     const { connection, qr, lastDisconnect } = update;
 
+    // Wait for the QR event before requesting a pairing code.
     if (
-      !state.creds.registered &&
+      qr &&
       !pairingStarted &&
-      (connection === "connecting" || Boolean(qr))
+      !state.creds.registered
     ) {
       pairingStarted = true;
 
       try {
         logger.info(
-          `Requesting pairing code for ${phoneNumber}`
+          `Requesting pairing code for ${CONFIG.BOT_PHONE_NUMBER}`
         );
 
         const code = await requestPairing(sock);
 
         if (!code) {
           logger.error(
-            "Pairing code generation failed."
+            "Pairing code request returned no code."
           );
           return;
         }
@@ -136,7 +126,7 @@ export async function connectToWhatsApp() {
     }
 
     if (connection === "open") {
-      logger.success("WhatsApp connection opened.");
+      logger.success("WhatsApp connected successfully.");
     }
 
     if (connection === "close") {
@@ -151,14 +141,14 @@ export async function connectToWhatsApp() {
 
       if (statusCode === 401) {
         logger.error(
-          "WhatsApp authentication rejected. A fresh login is required."
+          "WhatsApp rejected the saved session. A fresh login is required."
         );
       }
     }
   });
 
   logger.info(
-    "Waiting for WhatsApp connection readiness..."
+    "Waiting for WhatsApp QR event before requesting pairing code..."
   );
 
   return sock;
