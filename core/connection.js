@@ -17,6 +17,7 @@ const makeWASocket =
 
 const {
   useMultiFileAuthState,
+  fetchLatestWaWebVersion,
   fetchLatestBaileysVersion,
   Browsers
 } = baileys;
@@ -33,28 +34,54 @@ export async function connectToWhatsApp() {
 
   let version;
 
+  // Prefer the latest WhatsApp Web version.
   try {
-    const result = await fetchLatestBaileysVersion();
+    const result = await fetchLatestWaWebVersion();
 
     if (
-      Array.isArray(result?.version) &&
+      result?.isLatest === true &&
+      Array.isArray(result.version) &&
       result.version.length === 3
     ) {
       version = result.version;
 
       logger.success(
-        `Using WhatsApp version: ${version.join(".")}`
+        `Using latest WhatsApp Web version: ${version.join(".")}`
+      );
+    } else {
+      logger.warn(
+        "Latest WhatsApp Web version unavailable. Trying Baileys fallback version."
       );
     }
   } catch (error) {
     logger.warn(
-      `WhatsApp version check failed: ${error.message}`
+      `WhatsApp Web version check failed: ${error.message}`
     );
   }
 
-  const sock = makeWASocket({
-    ...(version ? { version } : {}),
+  // Fallback if the WhatsApp Web version could not be fetched.
+  if (!version) {
+    try {
+      const result = await fetchLatestBaileysVersion();
 
+      if (
+        Array.isArray(result?.version) &&
+        result.version.length === 3
+      ) {
+        version = result.version;
+
+        logger.warn(
+          `Using Baileys fallback version: ${version.join(".")}`
+        );
+      }
+    } catch (error) {
+      logger.warn(
+        `Baileys fallback version check failed: ${error.message}`
+      );
+    }
+  }
+
+  const socketOptions = {
     auth: state,
 
     logger: pino({
@@ -73,12 +100,18 @@ export async function connectToWhatsApp() {
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     keepAliveIntervalMs: 25000
-  });
+  };
+
+  if (version) {
+    socketOptions.version = version;
+  }
+
+  const sock = makeWASocket(socketOptions);
 
   // Save authentication updates.
   sock.ev.on("creds.update", saveCreds);
 
-  // If credentials are already registered, do not request another code.
+  // Existing registered session: do not request another pairing code.
   if (state.creds.registered) {
     logger.warn(
       "Existing registered session found. Checking WhatsApp authentication."
@@ -92,7 +125,7 @@ export async function connectToWhatsApp() {
   sock.ev.on("connection.update", async update => {
     const { connection, qr, lastDisconnect } = update;
 
-    // Wait for the QR event before requesting a pairing code.
+    // Request pairing code only once for this socket.
     if (
       qr &&
       !pairingStarted &&
@@ -111,6 +144,7 @@ export async function connectToWhatsApp() {
           logger.error(
             "Pairing code request returned no code."
           );
+          pairingStarted = false;
           return;
         }
 
@@ -118,6 +152,8 @@ export async function connectToWhatsApp() {
         logger.info(`CODE: ${code}`);
 
       } catch (error) {
+        pairingStarted = false;
+
         logger.error(
           "Pairing code request failed:",
           error
@@ -142,6 +178,12 @@ export async function connectToWhatsApp() {
       if (statusCode === 401) {
         logger.error(
           "WhatsApp rejected the saved session. A fresh login is required."
+        );
+      }
+
+      if (statusCode === 408) {
+        logger.warn(
+          "WhatsApp connection timed out. Check network stability and WhatsApp Web version."
         );
       }
     }
