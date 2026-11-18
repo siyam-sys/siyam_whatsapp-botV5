@@ -1,11 +1,8 @@
-
-import canvas from "canvas";
+import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
 import fs from "node:fs";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { AUTHOR } from "../../config.js";
-
-const { createCanvas, registerFont } = canvas;
 
 const LOCKED_AUTHOR = AUTHOR || "𝐑𝐉 𝐬𝐢𝐲𝐚𝐦";
 let FONT_FAMILY = "sans-serif";
@@ -25,16 +22,10 @@ function setupFonts() {
         ).trim();
 
         if (regular && fs.existsSync(regular)) {
-            registerFont(regular, {
-                family: "SiyamDashboard",
-                weight: "normal"
-            });
+            GlobalFonts.registerFromPath(regular, "SiyamDashboard");
 
             if (bold && fs.existsSync(bold)) {
-                registerFont(bold, {
-                    family: "SiyamDashboard",
-                    weight: "bold"
-                });
+                GlobalFonts.registerFromPath(bold, "SiyamDashboard");
             }
 
             FONT_FAMILY = '"SiyamDashboard"';
