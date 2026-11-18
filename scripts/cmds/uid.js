@@ -1,5 +1,4 @@
-
-import { createCanvas, loadImage } from "canvas";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 
 const LOCKED_AUTHOR_1 = "𝆠፝𝐒𝐈𝐘𝐀𝐌-𝐇𝐀𝐒𝐀𝐍";
 
@@ -53,26 +52,20 @@ function getQuotedParticipant(message) {
 }
 
 function getTargetJid(message, jid) {
-    // Reply করা মেসেজের ব্যক্তির UID
     const quotedParticipant = getQuotedParticipant(message);
 
-    if (quotedParticipant) {
-        return quotedParticipant;
-    }
+    if (quotedParticipant) return quotedParticipant;
 
-    // Group message হলে sender-এর participant JID
     if (message?.key?.participant) {
         return message.key.participant;
     }
 
-    // Private chat হলে remoteJid-ই user JID
     const remoteJid = message?.key?.remoteJid || jid;
 
     if (remoteJid && !remoteJid.endsWith("@g.us")) {
         return remoteJid;
     }
 
-    // কিছু handler-এ sender আলাদা করে দেওয়া থাকে
     return message?.sender || message?.senderJid || null;
 }
 
@@ -94,7 +87,6 @@ async function getAvatar(sock, targetJid) {
         if (!avatarUrl) return null;
 
         const response = await fetch(avatarUrl);
-
         if (!response.ok) return null;
 
         const buffer = Buffer.from(await response.arrayBuffer());
@@ -373,16 +365,13 @@ export default {
                 return reply("❌ WhatsApp user ID পাওয়া যায়নি।");
             }
 
-            // WhatsApp JID থেকে UID/নম্বর বের করা
             const targetID = targetJid.split("@")[0];
 
             const isQuoted = Boolean(getQuotedParticipant(message));
             const targetName = getUserName(message, targetJid, isQuoted);
 
-            // Profile picture না পাওয়া গেলে default avatar দেখাবে
             const avatar = await getAvatar(sock, targetJid);
 
-            // আগের ডিজাইনের বিপরীত ডিজাইন বেছে নেবে
             const userKey = targetJid;
             const lastDesign = userLastSelection.get(userKey);
 
