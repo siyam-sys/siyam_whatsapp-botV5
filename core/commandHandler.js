@@ -17,6 +17,7 @@ const commands = new Map();
 const replySessions = new Map();
 const firstChats = new Set();
 const cooldowns = new Map();
+const loadedFiles = new Map();
 
 const MAX_REPLY_SESSIONS = 500;
 const REPLY_SESSION_TTL = 24 * 60 * 60 * 1000;
@@ -28,22 +29,15 @@ function normalize(value) {
 function normalizeAliases(aliases) {
   if (!aliases) return [];
 
-  const list = Array.isArray(aliases)
-    ? aliases
-    : [aliases];
+  const list = Array.isArray(aliases) ? aliases : [aliases];
 
-  return list
-    .map(normalize)
-    .filter(Boolean);
+  return list.map(normalize).filter(Boolean);
 }
 
 function formatMessage(template, ...values) {
   return String(template).replace(/%(\d+)/g, (match, index) => {
     const value = values[Number(index) - 1];
-
-    return value === undefined
-      ? match
-      : String(value);
+    return value === undefined ? match : String(value);
   });
 }
 
@@ -56,9 +50,7 @@ async function getPrefixes(context) {
     });
 
     globalPrefix = saved?.prefix || globalPrefix;
-  } catch {
-    // Config prefix will be used.
-  }
+  } catch {}
 
   let groupPrefix = globalPrefix;
 
@@ -78,7 +70,6 @@ async function getPrefixes(context) {
 function getLanguageMessage(key, ...values) {
   const messages = {
     commandNotFound:
-      
       '🤷‍♂️ 𝗖𝗼𝗺𝗺𝗮𝗻𝗱 "%1" 𝗱𝗼𝗲𝘀 𝗻𝗼𝘁 𝗲𝘅𝗶𝘀𝘁, 𝘁𝘆𝗽𝗲 %2𝗵𝗲𝗹𝗽 𝘁𝗼 𝘀𝗲𝗲 𝗮𝗹𝗹 𝗮𝘃𝗮𝗶𝗹𝗮𝗯𝗹𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀 📜',
     onlyPrefix:
       "🤖 𝗧𝗵𝗮𝘁'𝘀 𝗷𝘂𝘀𝘁 𝗺𝘆 𝗽𝗿𝗲𝗳𝗶𝘅! 𝗧𝘆𝗽𝗲 %1𝗵𝗲𝗹𝗽 𝘁𝗼 𝘀𝗲𝗲 𝗮𝗹𝗹 𝗮𝘃𝗮𝗶𝗹𝗮𝗯𝗹𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀 ✨",
@@ -93,13 +84,72 @@ function getLanguageMessage(key, ...values) {
   return formatMessage(messages[key] || key, ...values);
 }
 
+function removeCommand(command) {
+  if (!command) return;
+
+  for (const [name, registered] of commands.entries()) {
+    if (registered === command) {
+      commands.delete(name);
+    }
+  }
+
+  for (const [file, registered] of loadedFiles.entries()) {
+    if (registered === command) {
+      loadedFiles.delete(file);
+    }
+  }
+}
+
+function registerCommand(command, fileName = null) {
+  if (
+    !command?.config ||
+    typeof command.onStart !== "function"
+  ) {
+    throw new Error("Invalid command: config and onStart are required.");
+  }
+
+  if (command.config.author !== AUTHOR) {
+    throw new Error(
+      `Wrong command author: ${command.config.name || fileName || "unknown"}`
+    );
+  }
+
+  const name = normalize(command.config.name);
+
+  if (!name) {
+    throw new Error("Command name is missing.");
+  }
+
+  const existing = commands.get(name);
+
+  if (existing && existing !== command) {
+    removeCommand(existing);
+  }
+
+  commands.set(name, command);
+
+  for (const alias of normalizeAliases(command.config.aliases)) {
+    const existingAlias = commands.get(alias);
+
+    if (existingAlias && existingAlias !== command) {
+      logger.warn(`Duplicate alias ignored: ${alias}`);
+      continue;
+    }
+
+    commands.set(alias, command);
+  }
+
+  if (fileName) {
+    loadedFiles.set(fileName, command);
+  }
+
+  return command;
+}
+
 function rememberReply(result, command, jid, senderJid) {
   const messageId = result?.key?.id;
 
-  if (
-    !messageId ||
-    typeof command.onReply !== "function"
-  ) {
+  if (!messageId || typeof command.onReply !== "function") {
     return;
   }
 
@@ -147,14 +197,12 @@ function getCooldown(command, senderJid, jid) {
   );
 
   if (!Number.isFinite(seconds) || seconds <= 0) {
-    return {
-      active: false,
-      remaining: 0
-    };
+    return { active: false, remaining: 0 };
   }
 
   const key = `${config.name}:${senderJid}:${jid}`;
   const lastUsed = cooldowns.get(key) || 0;
+
   const remaining = Math.ceil(
     (seconds * 1000 - (Date.now() - lastUsed)) / 1000
   );
@@ -179,9 +227,7 @@ function makeCommandContext(context, command, args, name, permission) {
     commandName: name,
     permission,
     config: command.config,
-
     event: context.message,
-
     message: {
       ...context.message,
       reply: context.reply
@@ -193,9 +239,7 @@ async function runLifecycleHook(hookName, context) {
   const uniqueCommands = new Set(commands.values());
 
   for (const command of uniqueCommands) {
-    if (typeof command?.[hookName] !== "function") {
-      continue;
-    }
+    if (typeof command?.[hookName] !== "function") continue;
 
     try {
       const permission = await checkPermission(
@@ -223,80 +267,124 @@ async function runLifecycleHook(hookName, context) {
   }
 }
 
-export async function loadCommands() {
-  commands.clear();
-  replySessions.clear();
-  cooldowns.clear();
-
+export async function loadCommandFile(fileName) {
   await fs.ensureDir(CONFIG.COMMAND_DIR);
 
-  const files = await fs.readdir(CONFIG.COMMAND_DIR);
+  let safeName = path.basename(String(fileName || "").trim());
 
-  for (const file of files.sort()) {
-    if (!file.endsWith(".js")) continue;
+  if (!safeName.endsWith(".js")) {
+    safeName += ".js";
+  }
 
-    const fullPath = path.join(CONFIG.COMMAND_DIR, file);
+  if (!safeName || safeName === ".js") {
+    throw new Error("Valid command filename is required.");
+  }
 
-    try {
-      const source = await fs.readFile(fullPath, "utf8");
+  const fullPath = path.join(CONFIG.COMMAND_DIR, safeName);
 
-      if (
-        CONFIG.AUTHOR_CHECK &&
-        !source.includes(`AUTHOR: ${AUTHOR}`)
-      ) {
-        logger.warn(`Command disabled: author marker mismatch: ${file}`);
-        continue;
-      }
+  if (!(await fs.pathExists(fullPath))) {
+    throw new Error(`Command file not found: ${safeName}`);
+  }
 
-      const module = await import(
-        `${pathToFileURL(fullPath).href}?v=${Date.now()}`
-      );
+  const source = await fs.readFile(fullPath, "utf8");
 
-      const command = module.default;
+  if (
+    CONFIG.AUTHOR_CHECK &&
+    !source.includes(`AUTHOR: ${AUTHOR}`)
+  ) {
+    throw new Error(`Author marker mismatch: ${safeName}`);
+  }
 
-      if (
-        !command?.config ||
-        typeof command.onStart !== "function"
-      ) {
-        logger.warn(`Invalid command disabled: ${file}`);
-        continue;
-      }
+  const module = await import(
+    `${pathToFileURL(fullPath).href}?v=${Date.now()}`
+  );
 
-      if (command.config.author !== AUTHOR) {
-        logger.warn(`Command disabled: wrong author: ${file}`);
-        continue;
-      }
+  const command = module.default;
 
-      const name = normalize(command.config.name);
+  registerCommand(command, safeName);
 
-      if (!name) {
-        logger.warn(`Command disabled: missing name: ${file}`);
-        continue;
-      }
+  logger.success(`Loaded command file: ${safeName}`);
 
-      if (commands.has(name)) {
-        logger.warn(`Duplicate command ignored: ${name}`);
-        continue;
-      }
+  return command;
+}
 
-      commands.set(name, command);
+export async function unloadCommandFile(fileName) {
+  const requested = path.basename(String(fileName || "").trim());
 
-      for (const alias of normalizeAliases(command.config.aliases)) {
-        if (commands.has(alias)) {
-          logger.warn(`Duplicate alias ignored: ${alias}`);
-          continue;
-        }
+  let targetFile = requested;
 
-        commands.set(alias, command);
-      }
+  if (!targetFile.endsWith(".js")) {
+    targetFile += ".js";
+  }
 
-      logger.success(`Loaded command: ${name}`);
-    } catch (error) {
-      logger.error(`Failed to load command: ${file}`, error);
+  let command = loadedFiles.get(targetFile);
+
+  if (!command) {
+    command = commands.get(normalize(fileName));
+  }
+
+  if (!command) {
+    throw new Error(`Command not loaded: ${requested}`);
+  }
+
+  const name = command.config?.name || requested;
+
+  removeCommand(command);
+
+  for (const [id, session] of replySessions.entries()) {
+    if (session.command === command) {
+      replySessions.delete(id);
     }
   }
 
-  return commands;
+  logger.info(`Unloaded command: ${name}`);
+
+  return name;
+}
+
+export async function loadAllCommandFiles() {
+  await fs.ensureDir(CONFIG.COMMAND_DIR);
+
+  const files = (await fs.readdir(CONFIG.COMMAND_DIR))
+    .filter(file => file.endsWith(".js"))
+    .sort();
+
+  const success = [];
+  const failed = [];
+
+  for (const file of files) {
+    try {
+      await loadCommandFile(file);
+      success.push(file);
+    } catch (error) {
+      failed.push(`${file}: ${error.message}`);
+      logger.error(`Failed to load command file: ${file}`, error);
+    }
+  }
+
+  return { success, failed };
+}
+
+export function unloadAllCommandFiles() {
+  const count = new Set(commands.values()).size;
+
+  commands.clear();
+  loadedFiles.clear();
+  replySessions.clear();
+  cooldowns.clear();
+
+  logger.info(`Unloaded ${count} commands`);
+
+  return count;
+}
+
+export async function loadCommands() {
+  commands.clear();
+  loadedFiles.clear();
+  replySessions.clear();
+  cooldowns.clear();
+
+  return loadAllCommandFiles();
 }
 
 export async function handleCommand(context) {
@@ -318,7 +406,6 @@ export async function handleCommand(context) {
 
   await runLifecycleHook("onEvent", context);
 
-  // Reply command handling.
   const replySession = findReplySession(context);
 
   if (replySession) {
@@ -368,11 +455,9 @@ export async function handleCommand(context) {
     body.startsWith(prefix)
   );
 
-  
   if (!matchedPrefix) {
     const plainParts = body.trim().split(/\s+/);
     const plainName = normalize(plainParts[0]);
-
     const plainCommand = commands.get(plainName);
 
     if (
@@ -511,6 +596,10 @@ export function getCommand(name) {
 
 export default {
   loadCommands,
+  loadCommandFile,
+  unloadCommandFile,
+  loadAllCommandFiles,
+  unloadAllCommandFiles,
   handleCommand,
   getCommands,
   getCommand
