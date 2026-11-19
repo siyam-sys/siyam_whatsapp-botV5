@@ -10,21 +10,21 @@ const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // Owner number: OWNER_NUMBER can be configured in Railway Variables.
 export const MAIN_OWNER =
-  process.env.OWNER_NUMBER || "01789138157";
+  process.env.OWNER_NUMBER || "এখানে তোমার সব পার্মিশনের জন্য ফোন নাম্বার বসাও";
 
 // Role 1: Group Admin
 export const GROUP_ADMIN_IDS = [
-  "15518304043117"
+  "হোয়াটসঅ্যাপ ইউ আই দিব"
 ];
 
 // Role 2: Bot Admin
 export const BOT_ADMIN_IDS = [
-  "15518304043117"
+  "হোয়াটসঅ্যাপ ইউ আই ডি বসাও"
 ];
 
 // Whitelist
 export const WHITELIST_IDS = [
-  "15518304043117"
+  "হোয়াটসঅ্যাপ ইউ আই ডি বসাও"
 ];
 
 export function normalizeNumber(value = "") {
